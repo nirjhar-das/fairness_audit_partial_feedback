@@ -18,7 +18,7 @@ This code base implements `RS-Audit` (Algorithm 1 in the paper), Algorithm 3 in 
 If you find this work useful in your research, please consider citing it.
 
 ~~~bibtex
-@article{sawarni2024optimal,
+@article{das2025cost,
     title={Cost Efficient Fairness Audit Under Partial Feedback},
     author={Das, Nirjhar and Sharma, Mohit and Nanavati, Praharsh and Shiragur, Kirankumar and Deshpande, Amit},
     year={2025},
