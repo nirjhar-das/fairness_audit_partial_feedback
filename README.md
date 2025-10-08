@@ -1,4 +1,4 @@
-Official Codebase for the paper *Cost Efficient Fairness Audit Under Partial Feedback* by [Nirjhar Das](https://nirjhar-das.github.io/), [Mohit Sharma](https://mohitsharma29.github.io), [Praharsh Nanavati](https://niftynans.github.io/index.html), [Kirankumar Shiragur](https://sites.google.com/view/kiran-shiragur) and [Amit Deshpande](https://www.microsoft.com/en-us/research/people/amitdesh/).
+Official Codebase for the paper [*Cost Efficient Fairness Audit Under Partial Feedback*](https://www.arxiv.org/abs/2510.03734) by [Nirjhar Das](https://nirjhar-das.github.io/), [Mohit Sharma](https://mohitsharma29.github.io), [Praharsh Nanavati](https://niftynans.github.io/index.html), [Kirankumar Shiragur](https://sites.google.com/view/kiran-shiragur) and [Amit Deshpande](https://www.microsoft.com/en-us/research/people/amitdesh/).
 
 
 ## Installation
@@ -22,8 +22,9 @@ If you find this work useful in your research, please consider citing it.
     title={Cost Efficient Fairness Audit Under Partial Feedback},
     author={Das, Nirjhar and Sharma, Mohit and Nanavati, Praharsh and Shiragur, Kirankumar and Deshpande, Amit},
     year={2025},
-    eprint={2404.06831},
+    eprint={2510.03734},
     archivePrefix={arXiv},
-    primaryClass={cs.LG}
+    primaryClass={cs.LG},
+    url={https://arxiv.org/abs/2510.03734},
 }
 ~~~
