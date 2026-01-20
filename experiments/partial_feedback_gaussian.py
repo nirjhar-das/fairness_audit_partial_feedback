@@ -101,6 +101,9 @@ def preprocess_real_data(df, target_col, categorical_cols, sensitive_column, sca
 
     return X, y, label_encoders
 
+# Mu, Sigma from data
+# X_new ~ N(mu, Sigma): X_new = S_ya*X_old + C_ya
+
 def naive_bayes_pipeline(df, target_col, dataset, from_NB = True, fair=False, protected_attribute = None):
     X, y, scaler = preprocess_data(df, target_col=target_col, dataset=dataset, from_NB=from_NB)
     # Because we dont care how f is trained, we dont care about stratified splits
@@ -283,7 +286,9 @@ def generate_examples(num_examples=1000, dim=100, var=1, means=None, a_1_prob=0.
             num_y_1_a_0 += 1
         else:
             num_y_0_a_0 += 1
-    covar = var*np.eye(dim) # Spherical gaussian for now
+    # Check if var is a list or number
+    if type(var) != list:
+        covar = var*np.eye(dim) # Spherical gaussian for now
     if means == None:
         mu_0_0 = [np.random.uniform(-1,1) for i in range(dim)]
         # Ensure separation between mu_0_0 and mu_1_0
@@ -303,10 +308,16 @@ def generate_examples(num_examples=1000, dim=100, var=1, means=None, a_1_prob=0.
         mu_1_0 = means[2]
         mu_1_1 = means[3]
     # Samples
-    samples_0_0 = np.random.multivariate_normal(mu_0_0, covar, num_y_0_a_0)
-    samples_0_1 = np.random.multivariate_normal(mu_0_1, covar, num_y_0_a_1)
-    samples_1_0 = np.random.multivariate_normal(mu_1_0, covar, num_y_1_a_0)
-    samples_1_1 = np.random.multivariate_normal(mu_1_1, covar, num_y_1_a_1)
+    if type(var) == list:
+        samples_0_0 = np.random.multivariate_normal(mu_0_0, var[0], num_y_0_a_0)
+        samples_0_1 = np.random.multivariate_normal(mu_0_1, var[1], num_y_0_a_1)
+        samples_1_0 = np.random.multivariate_normal(mu_1_0, var[2], num_y_1_a_0)
+        samples_1_1 = np.random.multivariate_normal(mu_1_1, var[3], num_y_1_a_1)
+    else:
+        samples_0_0 = np.random.multivariate_normal(mu_0_0, covar, num_y_0_a_0)
+        samples_0_1 = np.random.multivariate_normal(mu_0_1, covar, num_y_0_a_1)
+        samples_1_0 = np.random.multivariate_normal(mu_1_0, covar, num_y_1_a_0)
+        samples_1_1 = np.random.multivariate_normal(mu_1_1, covar, num_y_1_a_1)
     sensitive = np.asarray([0]*len(samples_0_0) + [1]*len(samples_0_1) + [0]*len(samples_1_0) + [1]*len(samples_1_1))
     label = np.asarray([0]*len(samples_0_0) + [0]*len(samples_0_1) + [1]*len(samples_1_0) + [1]*len(samples_1_1))
     return [mu_0_0, mu_0_1, mu_1_0, mu_1_1], np.vstack((samples_0_0, samples_0_1, samples_1_0, samples_1_1)), sensitive, label
@@ -656,14 +667,19 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
     #print('Unique values in label:', unique_y)
     subgroups_params = {}
     lam = 1000
+    print(unique_a, unique_y)
     for a in unique_a:
         for y in unique_y:
-            rad = 500*((np.log(1/alpha[f'{y}{a}'])) / (alpha[f'{y}{a}']**2))
+            print(f'Processing subgroup a={a}, y={y}')
+            if dataset == 'gaussian':
+                rad = 500*((np.log(1/alpha[f'{y}{a}'])) / (alpha[f'{y}{a}']**2))
+            else:
+                rad = ((np.log(1/alpha[f'{y}{a}'])) / (alpha[f'{y}{a}']**2))
             # Filter data based on sensitive attribute and label
             # stack the columns of a identity matrix
             filtered_data = x_filtered[(z_filtered == a) & (y_filtered == y)]
             # Split data into two parts
-            num_samples = min(int(0.5*filtered_data.shape[0]), 10000) # 2 samples for only testing code
+            num_samples = min(int(0.5*filtered_data.shape[0]), 10000, 100) # 2 samples for only testing code
             filtered_data_split = filtered_data[:num_samples]
             filtered_data = filtered_data[num_samples:num_samples*2]
             print(f'Number of samples for a={a}, y={y}: {filtered_data.shape[0]}')
@@ -830,20 +846,41 @@ def main(args):
             'p_y_1': p_y_1
         }
 
-        #generate_real_data_and_model()
+        # Temporary fix
+        moments, x_all, z_all, y_all, _, z_test_all, y_test_all, emb_model = generate_real_data_and_model(dataset='adult')
+        priors = {
+            'p_a_1': np.mean(z_all),
+            'p_y_1_a_1': np.sum((y_all == 1) & (z_all == 1)) / np.sum(z_all == 1),
+            'p_y_1_a_0': np.sum((y_all == 1) & (z_all == 0)) / np.sum(z_all == 0),
+            'p_y_1': np.mean(y_all)
+        }
+        means = [moments[0][0], moments[1][0], moments[2][0], moments[3][0]]
+        var = [moments[0][1], moments[1][1], moments[2][1], moments[3][1]]
+        dim = x_all.shape[1]
 
-        means, x, z, y = generate_examples(dim=dim, var=var, num_examples=train_samples, 
-                                        a_1_prob=p_a_1, 
-                                        y_1_a_1_prob=p_y_1_a_1, 
-                                        y_1_a_0_prob=p_y_1_a_0)
-        _, x_test, z_test, y_test = generate_examples(dim=dim, var=var, num_examples=train_samples,
-                                                    means=means, a_1_prob=p_a_1,
-                                                        y_1_a_1_prob=p_y_1_a_1,
-                                                        y_1_a_0_prob=p_y_1_a_0)
-        _, x_val, z_val, y_val = generate_examples(dim=dim, var=var, num_examples=10000,
-                                                means=means, a_1_prob=p_a_1,
-                                                y_1_a_1_prob=p_y_1_a_1,
-                                                y_1_a_0_prob=p_y_1_a_0)
+
+        # means, x, z, y = generate_examples(dim=dim, var=var, num_examples=train_samples, 
+        #                                 a_1_prob=p_a_1, 
+        #                                 y_1_a_1_prob=p_y_1_a_1, 
+        #                                 y_1_a_0_prob=p_y_1_a_0)
+        # _, x_test, z_test, y_test = generate_examples(dim=dim, var=var, num_examples=train_samples,
+        #                                             means=means, a_1_prob=p_a_1,
+        #                                                 y_1_a_1_prob=p_y_1_a_1,
+        #                                                 y_1_a_0_prob=p_y_1_a_0)
+        # _, x_val, z_val, y_val = generate_examples(dim=dim, var=var, num_examples=10000,
+        #                                         means=means, a_1_prob=p_a_1,
+        #                                         y_1_a_1_prob=p_y_1_a_1,
+        #                                         y_1_a_0_prob=p_y_1_a_0)
+        _,x,z,y = generate_examples(dim=dim, var=var, num_examples=train_samples,
+                                          a_1_prob=priors['p_a_1'],
+                                          y_1_a_1_prob=priors['p_y_1_a_1'],
+                                          y_1_a_0_prob=priors['p_y_1_a_0'],
+                                          means=means)
+        _,x_test,z_test,y_test = generate_examples(dim=dim, var=var, num_examples=test_samples,
+                                                         a_1_prob=priors['p_a_1'],
+                                                         y_1_a_1_prob=priors['p_y_1_a_1'],
+                                                         y_1_a_0_prob=priors['p_y_1_a_0'],
+                                                         means=means)
         print(f'Data generated and priors set: {x.shape}, {x_test.shape}')
         # Convert to dataframe
         df = pd.DataFrame(x, columns=[f'x_{i}' for i in range(dim)])
@@ -1039,12 +1076,16 @@ def main(args):
                             q_min = min(q_01, q_11)
                             q_oracle = (q_01, q_11)
                             theta_oracle = subgroup_params['01'], subgroup_params['11']
-                        m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 20000)
+                        if dataset == 'gaussian':
+                            m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 20000)
+                        else:
+                            m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 1000)
                         concat_samples_2 = 0
                         curr_sample_cost_2 = 0
                         N_0 = 0
                         N_1 = 0
                         N = copy.deepcopy(m)
+                        print(q_oracle, theta_oracle)
                         while(m > 0):
                             # index = rng.integers(0,len(df_a), 1)
                             # sampled_row = df_a.iloc[index]
