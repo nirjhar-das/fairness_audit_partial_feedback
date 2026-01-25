@@ -1189,10 +1189,10 @@ def main(args):
         writer_exp = csv.writer(file_exp)
         writer_two = csv.writer(file_two)
         if not file_exists_exp or os.path.getsize(writer_path_exp) == 0:
-            writer_exp.writerow(['run', 'algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'tau_prime', 'f_0', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
+            writer_exp.writerow(['run', 'algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'thresh', 'tau_prime', 'f_0', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
         if not file_exists_two or os.path.getsize(writer_path_two) == 0:
             # Check this later
-            writer_two.writerow(['run', 'algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'tau_prime', 'f_0', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
+            writer_two.writerow(['run', 'algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'thresh', 'tau_prime', 'f_0', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
         # Get filtered data and model (Same for both algorithms)
         # import copy
         # df_copy = copy.deepcopy(test_df) if dataset == 'gaussian' else copy.deepcopy(test_df_all)
@@ -1251,7 +1251,7 @@ def main(args):
                 for costs in costs_list:
                     tau_prime = (0.5*np.log(24/delta))/(eps_prime**2)
                     tau = min((2*np.log(24/delta))/(eps**2), 1000) # Where will this be used, the paper uses tau to define p, whereas we use sample ratios
-                    print(f'Tau prime: {tau_prime}, Tau: {tau}, Epsilon: {eps}, Delta: {delta}, Costs: {costs}')
+                    print(f'Tau prime: {tau_prime}, Tau: {tau}, Epsilon: {eps}, Threshold: {fair_thresh}, Delta: {delta}, Costs: {costs}')
                     sample_cost = costs[0]
                     label_cost = costs[1]
                         
@@ -1380,8 +1380,8 @@ def main(args):
                     eo_diff_exp = max(np.abs((p_00/q_hat_00) - (p_01/q_hat_01)), np.abs((p_10/q_hat_10) - (p_11/q_hat_11)))
                     eo_diff_2 = max(np.abs((p_00/q_00_2) - (p_01/q_01_2)), np.abs((p_10/q_10_2) - (p_11/q_11_2)))
                     # What all to track: writer.writerow(['algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'tau_prime', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
-                    writer_exp.writerow([run+1,'exp', sample_cost, label_cost, eps, tau_prime, args.model, policy, curr_sample_cost, curr_label_cost, eo_diff_exp, dist_fair, s, 1 - (dist_fair > fair_thresh + eps) , 1 - (eo_diff_exp > fair_thresh + eps/2)])
-                    writer_two.writerow([run+1, 'two', sample_cost, label_cost, eps, tau, args.model, policy, curr_sample_cost_2, curr_label_cost_2, eo_diff_2, dist_fair, s_2, 1 - (dist_fair > fair_thresh + eps), 1 - (eo_diff_2 > fair_thresh + eps/2)])
+                    writer_exp.writerow([run+1,'exp', sample_cost, label_cost, eps, fair_thresh, tau_prime, args.model, policy, curr_sample_cost, curr_label_cost, eo_diff_exp, dist_fair, s, 1 - (dist_fair > fair_thresh + eps) , 1 - (eo_diff_exp > fair_thresh + eps/2)])
+                    writer_two.writerow([run+1, 'two', sample_cost, label_cost, eps, fair_thresh, tau_prime, args.model, policy, curr_sample_cost_2, curr_label_cost_2, eo_diff_2, dist_fair, s_2, 1 - (dist_fair > fair_thresh + eps), 1 - (eo_diff_2 > fair_thresh + eps/2)])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
