@@ -1242,7 +1242,7 @@ def main(args):
             costs = []
             eps_prime = 1/5
             delta = 0.01
-            fair_thresholds = [0.5, 0.3, 0.0, 0.0, 0.0]
+            fair_thresholds = [0.5, 0.4, 0.0, 0.0, 0.0]
             eps_values = [0.25, 0.1, 0.1, 0.05, 0.01]
             # costs_list = [(0.5,0.25), (0.5, 0.5), (0.5, 1), (0.5, 3)]
             # eps_values = [0.8]
