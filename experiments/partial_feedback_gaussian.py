@@ -164,7 +164,7 @@ def clf_pipeline(df, target_col, from_NB = True, fair=False, protected_attribute
                 w = {0:99, 1:1}
                 model = LogisticRegression(solver='liblinear', class_weight=w)
             else:
-                model = LogisticRegression(penalty='l2', C=0.001)
+                model = LogisticRegression()
         model.fit(X_train, y_train)
         
     else:
@@ -367,8 +367,8 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     
     X, y, _ = preprocess_real_data(df, target_col=target_col, categorical_cols=categorical_cols, sensitive_column=A, dataset=dataset, from_NB=False)
     
-    from tabpfn_extensions import TabPFNClassifier
-    from tabpfn_extensions.embedding import TabPFNEmbedding
+    # from tabpfn_extensions import TabPFNClassifier
+    # from tabpfn_extensions.embedding import TabPFNEmbedding
     from sklearn.model_selection import train_test_split
 
     from fairlearn.metrics import equalized_odds_difference, true_positive_rate_difference
@@ -442,15 +442,17 @@ def generate_real_data_and_model(dataset='adult', seed=42):
             def __init__(self, input_dim, embedding_dim=10):
                 super(SimpleNN, self).__init__()
                 self.fc1 = nn.Linear(input_dim, 64)
-                self.fc2 = nn.Linear(64, embedding_dim)
-                self.fc3 = nn.Linear(embedding_dim, 1)
+                self.fc2 = nn.Linear(64, 32)
+                self.fc3 = nn.Linear(32, embedding_dim)
+                self.fc4 = nn.Linear(embedding_dim, 1)
                 self.relu = nn.ReLU()
                 self.sigmoid = nn.Sigmoid()
             
             def forward(self, x):
                 x = self.relu(self.fc1(x))
-                embedding = self.relu(self.fc2(x))
-                out = self.sigmoid(self.fc3(embedding))
+                x = self.relu(self.fc2(x))
+                embedding = self.relu(self.fc3(x))
+                out = self.sigmoid(self.fc4(embedding))
                 return out, embedding
         input_dim = X_train.shape[1]
         model_nn = SimpleNN(input_dim)
@@ -460,8 +462,8 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
         # Train for 100 epochs and print loss every 10 epochs
         model_nn.train()
-        num_epochs = 10000
-        print_every = 1000
+        num_epochs = 1000
+        print_every = 100
         for epoch in range(num_epochs):
             optimizer.zero_grad()
             outputs, _ = model_nn(X_train_tensor)
@@ -474,7 +476,17 @@ def generate_real_data_and_model(dataset='adult', seed=42):
             loss.backward()
             optimizer.step()
             if (epoch+1) % print_every == 0:
-                print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+                # Print accuracy on training set and test set
+                model_nn.eval()
+                with torch.no_grad():
+                    train_outputs, _ = model_nn(X_train_tensor)
+                    train_preds = (train_outputs.numpy() > 0.5).astype(int)
+                    train_acc = accuracy_score(y_train, train_preds)
+                    X_test_tensor = torch.FloatTensor(X_test)
+                    test_outputs, _ = model_nn(X_test_tensor)
+                    test_preds = (test_outputs.numpy() > 0.5).astype(int)
+                    test_acc = accuracy_score(y_test, test_preds)
+                    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}', f'Training Accuracy: {train_acc:.4f}, Test Accuracy: {test_acc:.4f}')
         # Get embeddings from the last hidden layer
         model_nn.eval()
         with torch.no_grad():
@@ -482,6 +494,18 @@ def generate_real_data_and_model(dataset='adult', seed=42):
             _, test_embeddings_nn = model_nn(torch.FloatTensor(X_test))
         train_embeddings_nn = train_embeddings_nn.numpy()
         test_embeddings_nn = test_embeddings_nn.numpy()
+        # Normalize train and test embeddings between -1 and 1
+        # max_val = np.max(train_embeddings_nn, axis=0)
+        # min_val = np.min(train_embeddings_nn, axis=0)
+        # train_embeddings_nn = 2 * (train_embeddings_nn - min_val) / (max_val - min_val + 1e-8) - 1
+        # test_embeddings_nn = 2 * (test_embeddings_nn - min_val) / (max_val - min_val + 1e-8) - 1
+        # Alternatively, normalize to zero mean and unit variance
+        # mu = np.mean(train_embeddings_nn, axis=0)
+        # sigma = np.std(train_embeddings_nn, axis=0)
+        # train_embeddings_nn = (train_embeddings_nn - mu) / (sigma + 1e-8)
+        # test_embeddings_nn = (test_embeddings_nn - mu) / (sigma + 1e-8)
+        # print('Mu and Sigma of NN embeddings:', mu, sigma)
+
         torch.save((train_embeddings_nn, test_embeddings_nn), f'{dataset}_{seed}_nn_embeddings.pt')
     else:
         print('Loading precomputed NN embeddings...')
@@ -649,7 +673,7 @@ def sample_gradient(w, x, oracle, dim, dist='gaussian', group=None, max_iter=200
     # Extract matrix and vector from w
     T = w[0:dim*dim].reshape(dim, dim)
     v = w[dim*dim:].reshape(dim, 1)
-    T_inv = np.linalg.inv(T)  # Inverse of the matrix T
+    T_inv = np.linalg.pinv(T)  # Inverse of the matrix T
     mu_est = T_inv @ v  # Mean estimate
     cov_est = T_inv
     counter = 0
@@ -765,8 +789,9 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
     unique_y = np.unique(y_filtered)
     #print('Unique values in label:', unique_y)
     subgroups_params = {}
-    lam = {'00': 1e+6, '01': 1e+7, '10': 1e+6, '11': 1e+7} # Step sizes for each subgroup
-    const = {'00': 1.0e+4, '01': 1.0e+5, '10': 1.0e+4, '11': 1.0e+5} # Constants for each subgroup
+    # lam = {'00': 1e+6, '01': 1e+7, '10': 1e+6, '11': 1e+7} # Step sizes for each subgroup
+    lam = {'00': 1e+6, '01': 1e+7, '10': 1e+4, '11': 1e+4}
+    const = {'00': 1.0e+4, '01': 1.0e+5, '10': 1.0e+4, '11': 1.0e+4} # Constants for each subgroup
     print(unique_a, unique_y)
     for a in unique_a:
         for y in unique_y:
@@ -779,13 +804,16 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
             # stack the columns of a identity matrix
             filtered_data = x_filtered[(z_filtered == a) & (y_filtered == y)]
             # Split data into two parts
-            num_samples = min(int(0.5*filtered_data.shape[0]), 1000) # 2 samples for only testing code
+            num_samples = min(int(0.5*filtered_data.shape[0]), 10000) # 2 samples for only testing code
+            # num_samples = min(int(filtered_data.shape[0]), 10000)
             filtered_data_split = filtered_data[:num_samples]
             filtered_data = filtered_data[num_samples:num_samples*2]
             print(f'Number of samples for a={a}, y={y}: {filtered_data.shape[0]}')
             #if filtered_data.shape[0] > 0:
             # Estimate parameters for the filtered data
             params = mle_moment_estimation(filtered_data_split[:,:-1]) # Parameters only need x, we will send group info to sample_gradient so that oracle can use group information
+            # params = mle_moment_estimation(filtered_data[:,:-1])
+            params['cov'] += 1e-4 * np.eye(dim)  # Regularization for numerical stability
 
             w = np.hstack((np.linalg.pinv(params['cov']).reshape(-1,), (np.linalg.pinv(params['cov']) @ params['mean']).reshape(-1)))
             print(f"Norm of w for subgroup {y}{a}:", np.linalg.norm(w))
@@ -794,7 +822,10 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
             no_result_gradient = 0
             no_result_project = 0
             for k in tqdm(range(1,filtered_data.shape[0]+1)):
-                eta_i = 1.0/(lam[f'{y}{a}'])
+                if y == 0:
+                    eta_i = 1.0/(k*lam[f'{y}{a}'])
+                else:
+                    eta_i = 1.0/(lam[f'{y}{a}'])
                 v = sample_gradient(w, filtered_data[k-1], pf_model, dim=dim, group=a, dist=dataset)
                 # Check if v is a vector or None
                 if isinstance(v, np.ndarray) and v.ndim == 1:
@@ -842,7 +873,7 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
                 else:
                     running_average_vector += subgroups_params[f'{y}{a}'][k]
                 final_est_vector = (1/(k+1))*running_average_vector
-                error = np.linalg.norm(final_est_vector - true_vectors) / np.linalg.norm(true_vectors) # Relative error
+                error = np.linalg.norm(final_est_vector - true_vectors) # Absolute error
                 errors[k] = error
             subgroups_params[f'{y}{a}'] = final_est_vector
             plt.figure()
@@ -856,6 +887,7 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
             else:
                 plt.savefig(f'../results_gaussian/{dataset}_manolis_errors_a_{a}_y_{y}.png')
             plt.close()
+    
             # print(final_est_vector[0 : dim*dim].reshape(dim, dim))
             # print(final_est_vector[dim*dim:].reshape(dim, 1))
             # print(true_vectors[0 : dim*dim].reshape(dim, dim))
@@ -864,9 +896,9 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
 
 def map_oracle(sampled_row, q, theta, dim):
     inv_var_0 = theta[0][0:dim*dim].reshape(dim, dim)
-    mean_0 = np.linalg.inv(inv_var_0).dot(theta[0][dim*dim:].reshape(dim,))
+    mean_0 = np.linalg.pinv(inv_var_0).dot(theta[0][dim*dim:].reshape(dim,))
     inv_var_1 = theta[1][0:dim*dim].reshape(dim, dim)
-    mean_1 = np.linalg.inv(inv_var_1).dot(theta[1][dim*dim:].reshape(dim,))
+    mean_1 = np.linalg.pinv(inv_var_1).dot(theta[1][dim*dim:].reshape(dim,))
     # Calculate gaussian density of incoming point
     eta_0 = (np.sqrt(np.linalg.det(inv_var_0))*np.exp(-0.5 * np.dot((sampled_row - mean_0).T, np.dot(inv_var_0, (sampled_row - mean_0)))))/((2*np.pi)**(dim/2))
     eta_1 = (np.sqrt(np.linalg.det(inv_var_1))*np.exp(-0.5 * np.dot((sampled_row - mean_1).T, np.dot(inv_var_1, (sampled_row - mean_1)))))/((2*np.pi)**(dim/2))
@@ -1070,12 +1102,10 @@ def main(args):
         # Print classification reports
         print("Bayes Classification Report for Group A=0:")
         print(classification_report_0)
-        print(np.mean(y_all[z_all == 0]))
         print(np.mean(pred_0))
         print(priors['p_y_1_a_0'])
         print("Bayes Classification Report for Group A=1:")
         print(classification_report_1)
-        print(np.mean(y_all[z_all == 1]))
         print(np.mean(pred_1))
         print(priors['p_y_1_a_1'])
 
@@ -1115,12 +1145,10 @@ def main(args):
         # Print classification reports
         print("Bayes Classification Report for Group A=0:")
         print(classification_report_0)
-        print(np.mean(y_all[z_all == 0]))
         print(np.mean(pred_0))
         print(priors['p_y_1_a_0'])
         print("Bayes Classification Report for Group A=1:")
         print(classification_report_1)
-        print(np.mean(y_all[z_all == 1]))
         print(np.mean(pred_1))
         print(priors['p_y_1_a_1'])
 
@@ -1179,7 +1207,8 @@ def main(args):
         # # classification report
         # print(classification_report(Y_test_1, pred_1))
 
-        for run in range(5):
+        num_trials = 5
+        for run in range(num_trials):
             # Generate new samples
             if dataset == 'gaussian':
                 _, x, z, y = generate_examples(dim=dim, var=var, num_examples=train_samples, means=means, a_1_prob=p_a_1,
@@ -1213,11 +1242,12 @@ def main(args):
             costs = []
             eps_prime = 1/5
             delta = 0.01
-            # eps_values = [0.8, 0.5, 0.25, 0.1, 0.05, 0.01, 0.001]
+            fair_thresholds = [0.5, 0.3, 0.0, 0.0, 0.0]
+            eps_values = [0.25, 0.1, 0.1, 0.05, 0.01]
             # costs_list = [(0.5,0.25), (0.5, 0.5), (0.5, 1), (0.5, 3)]
-            eps_values = [0.8]
-            costs_list = [(0.5,0.25)]
-            for eps in eps_values:
+            # eps_values = [0.8]
+            costs_list = [(0.5,0.25), (0, 1), (0.5, 1)]
+            for fair_thresh, eps in zip(fair_thresholds, eps_values):
                 for costs in costs_list:
                     tau_prime = (0.5*np.log(24/delta))/(eps_prime**2)
                     tau = min((2*np.log(24/delta))/(eps**2), 1000) # Where will this be used, the paper uses tau to define p, whereas we use sample ratios
@@ -1315,7 +1345,7 @@ def main(args):
                         if dataset == 'gaussian':
                             m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 20000)
                         else:
-                            m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 1000)
+                            m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 5000) # 1000 changed to 5000
                         concat_samples_2 = 0
                         curr_sample_cost_2 = 0
                         N_0 = 0
@@ -1350,8 +1380,8 @@ def main(args):
                     eo_diff_exp = max(np.abs((p_00/q_hat_00) - (p_01/q_hat_01)), np.abs((p_10/q_hat_10) - (p_11/q_hat_11)))
                     eo_diff_2 = max(np.abs((p_00/q_00_2) - (p_01/q_01_2)), np.abs((p_10/q_10_2) - (p_11/q_11_2)))
                     # What all to track: writer.writerow(['algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'tau_prime', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
-                    writer_exp.writerow([run+1,'exp', sample_cost, label_cost, eps, tau_prime, args.model, policy, curr_sample_cost, curr_label_cost, eo_diff_exp, dist_fair, s, 1 - (dist_fair > eps) , 1 - (eo_diff_exp > eps/2)])
-                    writer_two.writerow([run+1, 'two', sample_cost, label_cost, eps, tau, args.model, policy, curr_sample_cost_2, curr_label_cost_2, eo_diff_2, dist_fair, s_2, 1 - (dist_fair > eps), 1 - (eo_diff_2 > eps/2)])
+                    writer_exp.writerow([run+1,'exp', sample_cost, label_cost, eps, tau_prime, args.model, policy, curr_sample_cost, curr_label_cost, eo_diff_exp, dist_fair, s, 1 - (dist_fair > fair_thresh + eps) , 1 - (eo_diff_exp > fair_thresh + eps/2)])
+                    writer_two.writerow([run+1, 'two', sample_cost, label_cost, eps, tau, args.model, policy, curr_sample_cost_2, curr_label_cost_2, eo_diff_2, dist_fair, s_2, 1 - (dist_fair > fair_thresh + eps), 1 - (eo_diff_2 > fair_thresh + eps/2)])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
