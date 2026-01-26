@@ -442,7 +442,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
             def __init__(self, input_dim, embedding_dim=10):
                 super(SimpleNN, self).__init__()
                 self.fc1 = nn.Linear(input_dim, 64)
-                self.fc2 = nn.Linear(64, 32)
+                self.fc2 = nn.Linear(64, 32) # Add batch norm
                 self.fc3 = nn.Linear(32, embedding_dim)
                 self.fc4 = nn.Linear(embedding_dim, 1)
                 self.relu = nn.ReLU()
@@ -1243,7 +1243,7 @@ def main(args):
             eps_prime = 1/5
             delta = 0.01
             fair_thresholds = [0.5, 0.4, 0.0, 0.0, 0.0]
-            eps_values = [0.25, 0.1, 0.1, 0.05, 0.01]
+            eps_values = [0.3, 0.2, 0.1, 0.05, 0.01]
             # costs_list = [(0.5,0.25), (0.5, 0.5), (0.5, 1), (0.5, 3)]
             # eps_values = [0.8]
             costs_list = [(0.5,0.25), (0, 1), (0.5, 1)]
