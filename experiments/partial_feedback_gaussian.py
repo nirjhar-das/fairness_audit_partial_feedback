@@ -101,6 +101,9 @@ def preprocess_real_data(df, target_col, categorical_cols, sensitive_column, sca
 
     return X, y, label_encoders
 
+# Mu, Sigma from data
+# X_new ~ N(mu, Sigma): X_new = S_ya*X_old + C_ya
+
 def naive_bayes_pipeline(df, target_col, dataset, from_NB = True, fair=False, protected_attribute = None):
     X, y, scaler = preprocess_data(df, target_col=target_col, dataset=dataset, from_NB=from_NB)
     # Because we dont care how f is trained, we dont care about stratified splits
@@ -140,10 +143,19 @@ def clf_pipeline(df, target_col, from_NB = True, fair=False, protected_attribute
     X_train = df.drop(columns=[target_col])
     y_train = df[target_col]
     A_train = df[protected_attribute]
+    # print("CLF Pipeline Train samples")
+    # print(X_train.head())
 
     X_test = test_df.drop(columns=[target_col])
     y_test = test_df[target_col]
     a_test = test_df[protected_attribute]
+
+    X_train = X_train.values
+    X_test = X_test.values
+    y_train = y_train.values
+    y_test = y_test.values
+    A_train = A_train.values
+    a_test = a_test.values
     if not fair:
         if random_forest:
             model = RandomForestClassifier()        
@@ -171,7 +183,8 @@ def clf_pipeline(df, target_col, from_NB = True, fair=False, protected_attribute
     for a in [0,1]:
         idx_a = (a_test == a)
         idx_y = (y_test == 0)
-        pr = np.sum(preds[idx_a & idx_y]) / len(preds[idx_a & idx_y])
+        # pr = np.sum(preds[idx_a & idx_y]) / len(preds[idx_a & idx_y])
+        pr = np.sum(preds[idx_a]) / len(preds[idx_a])
         true_pr = np.sum(y_test[idx_a]) / len(y_test[idx_a])
         print(f'Positivity rate for group {a}: {pr}, True positivity rate: {true_pr}')
     return model
@@ -283,7 +296,9 @@ def generate_examples(num_examples=1000, dim=100, var=1, means=None, a_1_prob=0.
             num_y_1_a_0 += 1
         else:
             num_y_0_a_0 += 1
-    covar = var*np.eye(dim) # Spherical gaussian for now
+    # Check if var is a list or number
+    if type(var) != list:
+        covar = var*np.eye(dim) # Spherical gaussian for now
     if means == None:
         mu_0_0 = [np.random.uniform(-1,1) for i in range(dim)]
         # Ensure separation between mu_0_0 and mu_1_0
@@ -303,10 +318,16 @@ def generate_examples(num_examples=1000, dim=100, var=1, means=None, a_1_prob=0.
         mu_1_0 = means[2]
         mu_1_1 = means[3]
     # Samples
-    samples_0_0 = np.random.multivariate_normal(mu_0_0, covar, num_y_0_a_0)
-    samples_0_1 = np.random.multivariate_normal(mu_0_1, covar, num_y_0_a_1)
-    samples_1_0 = np.random.multivariate_normal(mu_1_0, covar, num_y_1_a_0)
-    samples_1_1 = np.random.multivariate_normal(mu_1_1, covar, num_y_1_a_1)
+    if type(var) == list:
+        samples_0_0 = np.random.multivariate_normal(mu_0_0, var[0], num_y_0_a_0)
+        samples_0_1 = np.random.multivariate_normal(mu_0_1, var[1], num_y_0_a_1)
+        samples_1_0 = np.random.multivariate_normal(mu_1_0, var[2], num_y_1_a_0)
+        samples_1_1 = np.random.multivariate_normal(mu_1_1, var[3], num_y_1_a_1)
+    else:
+        samples_0_0 = np.random.multivariate_normal(mu_0_0, covar, num_y_0_a_0)
+        samples_0_1 = np.random.multivariate_normal(mu_0_1, covar, num_y_0_a_1)
+        samples_1_0 = np.random.multivariate_normal(mu_1_0, covar, num_y_1_a_0)
+        samples_1_1 = np.random.multivariate_normal(mu_1_1, covar, num_y_1_a_1)
     sensitive = np.asarray([0]*len(samples_0_0) + [1]*len(samples_0_1) + [0]*len(samples_1_0) + [1]*len(samples_1_1))
     label = np.asarray([0]*len(samples_0_0) + [0]*len(samples_0_1) + [1]*len(samples_1_0) + [1]*len(samples_1_1))
     return [mu_0_0, mu_0_1, mu_1_0, mu_1_1], np.vstack((samples_0_0, samples_0_1, samples_1_0, samples_1_1)), sensitive, label
@@ -346,8 +367,8 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     
     X, y, _ = preprocess_real_data(df, target_col=target_col, categorical_cols=categorical_cols, sensitive_column=A, dataset=dataset, from_NB=False)
     
-    from tabpfn_extensions import TabPFNClassifier
-    from tabpfn_extensions.embedding import TabPFNEmbedding
+    # from tabpfn_extensions import TabPFNClassifier
+    # from tabpfn_extensions.embedding import TabPFNEmbedding
     from sklearn.model_selection import train_test_split
 
     from fairlearn.metrics import equalized_odds_difference, true_positive_rate_difference
@@ -409,51 +430,149 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     #     true_pr = np.sum(y_test[idx]) / len(y_test[idx])
     #     print(f'Positivity rate for group {a}: {pr}, True positivity rate: {true_pr}')
 
-    # Train and evaluate TabPFN embeddings (vanilla)
-    if not os.path.exists(f'{dataset}_{seed}_embeddings.pt'):
-        print('Generating TabPFN embeddings...')
-        clf = TabPFNClassifier(n_estimators=1, random_state=42)
-        embedding_extractor = TabPFNEmbedding(tabpfn_clf=clf, n_fold=0)
-        train_embeddings = embedding_extractor.get_embeddings(
-            X_train,
-            y_train,
-            X_test,
-            data_source="train",
-        )[0]
+    # Train a 3-layer neural net on X_train and y_train to get embeddings in torch
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    torch.manual_seed(42)
 
-        test_embeddings = embedding_extractor.get_embeddings(
-            X_train,
-            y_train,
-            X_test,
-            data_source="test",
-        )[0]
-        torch.save((train_embeddings, test_embeddings), f'{dataset}_{seed}_embeddings.pt')
+    if not os.path.exists(f'{dataset}_{seed}_nn_embeddings.pt'):
+
+        class SimpleNN(nn.Module):
+            def __init__(self, input_dim, embedding_dim=10):
+                super(SimpleNN, self).__init__()
+                self.fc1 = nn.Linear(input_dim, 64)
+                self.fc2 = nn.Linear(64, 32) # Add batch norm
+                self.fc3 = nn.Linear(32, embedding_dim)
+                self.fc4 = nn.Linear(embedding_dim, 1)
+                self.relu = nn.ReLU()
+                self.sigmoid = nn.Sigmoid()
+            
+            def forward(self, x):
+                x = self.relu(self.fc1(x))
+                x = self.relu(self.fc2(x))
+                embedding = self.relu(self.fc3(x))
+                out = self.sigmoid(self.fc4(embedding))
+                return out, embedding
+        input_dim = X_train.shape[1]
+        model_nn = SimpleNN(input_dim)
+        criterion = nn.BCELoss()
+        optimizer = optim.Adam(model_nn.parameters(), lr=0.001)
+        X_train_tensor = torch.FloatTensor(X_train)
+        y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
+        # Train for 100 epochs and print loss every 10 epochs
+        model_nn.train()
+        num_epochs = 1000
+        print_every = 100
+        for epoch in range(num_epochs):
+            optimizer.zero_grad()
+            outputs, _ = model_nn(X_train_tensor)
+            loss = criterion(outputs, y_train_tensor)
+            # Add regrularization to prevent overfitting
+            # reg_loss = 0
+            # for param in model_nn.parameters():
+            #     reg_loss += param.norm(2)
+            # loss += 0.001 * reg_loss
+            loss.backward()
+            optimizer.step()
+            if (epoch+1) % print_every == 0:
+                # Print accuracy on training set and test set
+                model_nn.eval()
+                with torch.no_grad():
+                    train_outputs, _ = model_nn(X_train_tensor)
+                    train_preds = (train_outputs.numpy() > 0.5).astype(int)
+                    train_acc = accuracy_score(y_train, train_preds)
+                    X_test_tensor = torch.FloatTensor(X_test)
+                    test_outputs, _ = model_nn(X_test_tensor)
+                    test_preds = (test_outputs.numpy() > 0.5).astype(int)
+                    test_acc = accuracy_score(y_test, test_preds)
+                    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}', f'Training Accuracy: {train_acc:.4f}, Test Accuracy: {test_acc:.4f}')
+        # Get embeddings from the last hidden layer
+        model_nn.eval()
+        with torch.no_grad():
+            _, train_embeddings_nn = model_nn(torch.FloatTensor(X_train))
+            _, test_embeddings_nn = model_nn(torch.FloatTensor(X_test))
+        train_embeddings_nn = train_embeddings_nn.numpy()
+        test_embeddings_nn = test_embeddings_nn.numpy()
+        # Normalize train and test embeddings between -1 and 1
+        # max_val = np.max(train_embeddings_nn, axis=0)
+        # min_val = np.min(train_embeddings_nn, axis=0)
+        # train_embeddings_nn = 2 * (train_embeddings_nn - min_val) / (max_val - min_val + 1e-8) - 1
+        # test_embeddings_nn = 2 * (test_embeddings_nn - min_val) / (max_val - min_val + 1e-8) - 1
+        # Alternatively, normalize to zero mean and unit variance
+        # mu = np.mean(train_embeddings_nn, axis=0)
+        # sigma = np.std(train_embeddings_nn, axis=0)
+        # train_embeddings_nn = (train_embeddings_nn - mu) / (sigma + 1e-8)
+        # test_embeddings_nn = (test_embeddings_nn - mu) / (sigma + 1e-8)
+        # print('Mu and Sigma of NN embeddings:', mu, sigma)
+
+        torch.save((train_embeddings_nn, test_embeddings_nn), f'{dataset}_{seed}_nn_embeddings.pt')
     else:
-        print('Loading precomputed TabPFN embeddings...')
-        train_embeddings, test_embeddings = torch.load(f'{dataset}_{seed}_embeddings.pt', weights_only=False)
+        print('Loading precomputed NN embeddings...')
+        train_embeddings_nn, test_embeddings_nn = torch.load(f'{dataset}_{seed}_nn_embeddings.pt', weights_only=False)
+    
+    emb_model_nn = LogisticRegression().fit(np.concatenate((train_embeddings_nn, a_train.reshape(-1,1)), axis=1), y_train)
+    emb_preds_nn = emb_model_nn.predict(np.concatenate((test_embeddings_nn, a_test.reshape(-1,1)), axis=1))
+    emb_unf_nn = equalized_odds_difference(y_test, emb_preds_nn, sensitive_features=a_test)
+    #emb_unf_nn = true_positive_rate_difference(y_test, emb_preds_nn, sensitive_features=a_test)
+    print("NN Embedding Model Performance:", accuracy_score(y_test, emb_preds_nn), "Unfairness:", emb_unf_nn)
+    print(classification_report(y_test, emb_preds_nn))
 
-    print('Obtained embeddings of shape:', train_embeddings.shape, test_embeddings.shape)
+    # Save NN embeddings
+    # torch.save((train_embeddings_nn, test_embeddings_nn), f'{dataset}_{seed}_nn_embeddings.pt')
+    
 
-    emb_model = LogisticRegression().fit(np.concatenate((train_embeddings, a_train.reshape(-1,1)), axis=1), y_train)
-    emb_preds = emb_model.predict(np.concatenate((test_embeddings, a_test.reshape(-1,1)), axis=1))
-    emb_unf = equalized_odds_difference(y_test, emb_preds, sensitive_features=a_test)
+    # Train and evaluate TabPFN embeddings (vanilla)
+    # if not os.path.exists(f'{dataset}_{seed}_embeddings.pt'):
+    #     print('Generating TabPFN embeddings...')
+    #     clf = TabPFNClassifier(n_estimators=1, random_state=42)
+    #     embedding_extractor = TabPFNEmbedding(tabpfn_clf=clf, n_fold=0)
+    #     train_embeddings = embedding_extractor.get_embeddings(
+    #         X_train,
+    #         y_train,
+    #         X_test,
+    #         data_source="train",
+    #     )[0]
+
+    #     test_embeddings = embedding_extractor.get_embeddings(
+    #         X_train,
+    #         y_train,
+    #         X_test,
+    #         data_source="test",
+    #     )[0]
+    #     torch.save((train_embeddings, test_embeddings), f'{dataset}_{seed}_embeddings.pt')
+    # else:
+    #     print('Loading precomputed TabPFN embeddings...')
+    #     train_embeddings, test_embeddings = torch.load(f'{dataset}_{seed}_embeddings.pt', weights_only=False)
+        # Normalize train and test embeddings
+        # mu = np.mean(train_embeddings, axis=0)
+        # sigma = np.std(train_embeddings, axis=0)
+        # train_embeddings = (train_embeddings - mu) / (sigma + 1e-8)
+        # test_embeddings = (test_embeddings - mu) / (sigma + 1e-8)
+        # print('Mu and Sigma of loaded embeddings:', mu, sigma)
+
+    print('Obtained embeddings of shape:', train_embeddings_nn.shape, test_embeddings_nn.shape)
+
+    # emb_model = LogisticRegression().fit(np.concatenate((train_embeddings_nn, a_train.reshape(-1,1)), axis=1), y_train)
+    # emb_preds = emb_model.predict(np.concatenate((test_embeddings_nn, a_test.reshape(-1,1)), axis=1))
+    # emb_unf = equalized_odds_difference(y_test, emb_preds, sensitive_features=a_test)
     #emb_unf = true_positive_rate_difference(y_test, emb_preds, sensitive_features=a_test)
-    print("TabPFN Embedding Model Performance:", accuracy_score(y_test, emb_preds), "Unfairness:", emb_unf)
+    # print("TabPFN Embedding Model Performance:", accuracy_score(y_test, emb_preds), "Unfairness:", emb_unf)
     # Positivity rate for each group
     for a in [0,1]:
         idx = (a_test == a)
         idx_y = (y_test == 0)
-        pr = np.sum(emb_preds[idx & idx_y]) / np.sum(idx & idx_y)
+        pr = np.sum(emb_preds_nn[idx & idx_y]) / np.sum(idx & idx_y)
         true_pr = np.sum(y_test[idx]) / len(y_test[idx])
         print(f'Positivity rate at source for group {a}: {pr}, True positivity rate: {true_pr}')
-    print(classification_report(y_test, emb_preds))
+    # print(classification_report(y_test, emb_preds))
     
     #return [mu_0_0, mu_0_1, mu_1_0, mu_1_1], np.vstack((samples_0_0, samples_0_1, samples_1_0, samples_1_1)), sensitive, label
     # Split data into subgroups
-    features_00 = train_embeddings[(a_train == 0) & (y_train == 0)]
-    features_01 = train_embeddings[(a_train == 1) & (y_train == 0)]
-    features_10 = train_embeddings[(a_train == 0) & (y_train == 1)]
-    features_11 = train_embeddings[(a_train == 1) & (y_train == 1)]
+    features_00 = train_embeddings_nn[(a_train == 0) & (y_train == 0)]
+    features_01 = train_embeddings_nn[(a_train == 1) & (y_train == 0)]
+    features_10 = train_embeddings_nn[(a_train == 0) & (y_train == 1)]
+    features_11 = train_embeddings_nn[(a_train == 1) & (y_train == 1)]
 
     mu_0_0 = np.mean(features_00, axis=0)
     mu_0_1 = np.mean(features_01, axis=0)
@@ -487,7 +606,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     # print('Truncation Stats: ', x_filtered.shape, y_filtered.shape, train_embeddings.shape, y_train.shape)
 
     # return x_filtered, z_filtered, y_filtered,test_embeddings, a_test, y_test, pf_model, [(mu_0_0, var_0_0), (mu_0_1, var_0_1), (mu_1_0, var_1_0), (mu_1_1, var_1_1)]\
-    return [(mu_0_0, var_0_0), (mu_0_1, var_0_1), (mu_1_0, var_1_0), (mu_1_1, var_1_1)], train_embeddings, a_train, y_train, test_embeddings, a_test, y_test, emb_model
+    return [(mu_0_0, var_0_0), (mu_0_1, var_0_1), (mu_1_0, var_1_0), (mu_1_1, var_1_1)], train_embeddings_nn, a_train, y_train, test_embeddings_nn, a_test, y_test, emb_model_nn
 
 def generate_data_and_model(dim=10, var=3, train_samples=5000, test_samples=2000, priors=None, means=None):
     """
@@ -545,13 +664,16 @@ def suff_statistic(x, dist='gaussian'):
         # flatten the matrix in the shape of x and return
         return np.hstack((xxt.reshape(-1,), x))
     else:
-        raise ValueError("Unsupported distribution type")
+        xxt = (-1/2)*np.outer(x, x)
+        # flatten the matrix in the shape of x and return
+        return np.hstack((xxt.reshape(-1,), x))
+        # raise ValueError("Unsupported distribution type")
 
-def sample_gradient(w, x, oracle, dim, dist='gaussian', group=None, max_iter=5):
+def sample_gradient(w, x, oracle, dim, dist='gaussian', group=None, max_iter=2000):
     # Extract matrix and vector from w
     T = w[0:dim*dim].reshape(dim, dim)
     v = w[dim*dim:].reshape(dim, 1)
-    T_inv = np.linalg.inv(T)  # Inverse of the matrix T
+    T_inv = np.linalg.pinv(T)  # Inverse of the matrix T
     mu_est = T_inv @ v  # Mean estimate
     cov_est = T_inv
     counter = 0
@@ -561,15 +683,22 @@ def sample_gradient(w, x, oracle, dim, dist='gaussian', group=None, max_iter=5):
             y = np.random.multivariate_normal(mu_est.reshape(-1,), cov_est).reshape(1,-1)
             # Add group info as last column
             y_aware = np.hstack((y, np.array([[group]]))) if group is not None else 0
-        if oracle.predict(y_aware):
-            y = y.reshape(-1,)
-            return suff_statistic(y, dist=dist) - suff_statistic(x[:-1], dist=dist)
+            if oracle.predict(y_aware):
+                y = y.reshape(-1,)
+                return suff_statistic(y, dist=dist) - suff_statistic(x[:-1], dist=dist)
+        else:
+            y = np.random.multivariate_normal(mu_est.reshape(-1,), cov_est).reshape(1,-1)
+            y_aware = np.hstack((y, np.array([[group]]))) if group is not None else 0
+            if oracle.predict(y_aware):
+                y = y.reshape(-1,)
+                return suff_statistic(y, dist=dist) - suff_statistic(x[:-1], dist=dist)
+        
         counter += 1
         if counter >= max_iter:
             #print('Max iter reached')
             return None
 
-def project2(r, dim, c, w0):
+def project2(r, dim, c, w0, const=2.0e+4):
     # Program to find v
     v_prime = cp.Variable((dim,))
     T_prime = cp.Variable((dim, dim), PSD=True)
@@ -601,12 +730,17 @@ def project2(r, dim, c, w0):
     )
     
     # Constraints
+    # constraints = [
+    #     cp.sum_squares(v_prime - w0_scaled[dim*dim:]) + 
+    #     cp.sum_squares(T_prime - w0_scaled[0:dim*dim].reshape(dim, dim)) <= 200*(c_scaled**2),
+    #     T_prime >> epsilon * np.eye(dim),
+    #     cp.norm(v_prime, 2) <= 100*scaling_factor,
+    #     cp.norm(T_prime, 'fro') <= 100*scaling_factor
+    # ]
+
     constraints = [
         cp.sum_squares(v_prime - w0_scaled[dim*dim:]) + 
-        cp.sum_squares(T_prime - w0_scaled[0:dim*dim].reshape(dim, dim)) <= 2*(c_scaled**2),
-        T_prime >> epsilon * np.eye(dim),
-        cp.norm(v_prime, 2) <= 5,
-        cp.norm(T_prime, 'fro') <= 5
+        cp.sum_squares(T_prime - w0_scaled[0:dim*dim].reshape(dim, dim)) <= const*(c_scaled**2)
     ]
     
     prob = cp.Problem(objective, constraints)
@@ -642,7 +776,7 @@ def project2(r, dim, c, w0):
 import copy
 import matplotlib.pyplot as plt
 def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='gaussian'):
-    print(f'Estimating params using Manolis algorithm')
+    print(f'Estimating params using Manolis algorithm on {dataset} dataset')
     # Extract f_0=1 samples from data
     df = data[data['f_0'] == 1]
     # Pop out sensitive and label
@@ -655,34 +789,48 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
     unique_y = np.unique(y_filtered)
     #print('Unique values in label:', unique_y)
     subgroups_params = {}
-    lam = 1000
+    # lam = {'00': 1e+6, '01': 1e+7, '10': 1e+6, '11': 1e+7} # Step sizes for each subgroup
+    lam = {'00': 1e+6, '01': 1e+7, '10': 1e+4, '11': 1e+4}
+    const = {'00': 1.0e+4, '01': 1.0e+5, '10': 1.0e+4, '11': 1.0e+4} # Constants for each subgroup
+    print(unique_a, unique_y)
     for a in unique_a:
         for y in unique_y:
-            rad = 500*((np.log(1/alpha[f'{y}{a}'])) / (alpha[f'{y}{a}']**2))
+            print(f'Processing subgroup a={a}, y={y}')
+            if dataset == 'gaussian':
+                rad = 500*((np.log(1/alpha[f'{y}{a}'])) / (alpha[f'{y}{a}']**2))
+            else:
+                rad = 500*(dim * (dim + 1))*((np.log(1/alpha[f'{y}{a}'])) / (alpha[f'{y}{a}']**2))
             # Filter data based on sensitive attribute and label
             # stack the columns of a identity matrix
             filtered_data = x_filtered[(z_filtered == a) & (y_filtered == y)]
             # Split data into two parts
             num_samples = min(int(0.5*filtered_data.shape[0]), 10000) # 2 samples for only testing code
+            # num_samples = min(int(filtered_data.shape[0]), 10000)
             filtered_data_split = filtered_data[:num_samples]
             filtered_data = filtered_data[num_samples:num_samples*2]
             print(f'Number of samples for a={a}, y={y}: {filtered_data.shape[0]}')
             #if filtered_data.shape[0] > 0:
             # Estimate parameters for the filtered data
             params = mle_moment_estimation(filtered_data_split[:,:-1]) # Parameters only need x, we will send group info to sample_gradient so that oracle can use group information
+            # params = mle_moment_estimation(filtered_data[:,:-1])
+            params['cov'] += 1e-4 * np.eye(dim)  # Regularization for numerical stability
 
             w = np.hstack((np.linalg.pinv(params['cov']).reshape(-1,), (np.linalg.pinv(params['cov']) @ params['mean']).reshape(-1)))
+            print(f"Norm of w for subgroup {y}{a}:", np.linalg.norm(w))
             all_params = {}
             all_params[0] = copy.deepcopy(w)
             no_result_gradient = 0
             no_result_project = 0
             for k in tqdm(range(1,filtered_data.shape[0]+1)):
-                eta_i = 1/(lam)
-                v = sample_gradient(w, filtered_data[k-1], pf_model, dim=dim, group=a)
+                if y == 0:
+                    eta_i = 1.0/(k*lam[f'{y}{a}'])
+                else:
+                    eta_i = 1.0/(lam[f'{y}{a}'])
+                v = sample_gradient(w, filtered_data[k-1], pf_model, dim=dim, group=a, dist=dataset)
                 # Check if v is a vector or None
                 if isinstance(v, np.ndarray) and v.ndim == 1:
                     r = w - (eta_i * v)
-                    w_new = project2(r, dim, rad, all_params[0])
+                    w_new = project2(r, dim, rad, all_params[0], const[f'{y}{a}'])
                     if isinstance(w_new, np.ndarray) and w_new.ndim == 1:
                         w = w_new
                     else:
@@ -725,7 +873,7 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
                 else:
                     running_average_vector += subgroups_params[f'{y}{a}'][k]
                 final_est_vector = (1/(k+1))*running_average_vector
-                error = np.linalg.norm(final_est_vector - true_vectors)
+                error = np.linalg.norm(final_est_vector - true_vectors) # Absolute error
                 errors[k] = error
             subgroups_params[f'{y}{a}'] = final_est_vector
             plt.figure()
@@ -739,6 +887,7 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
             else:
                 plt.savefig(f'../results_gaussian/{dataset}_manolis_errors_a_{a}_y_{y}.png')
             plt.close()
+    
             # print(final_est_vector[0 : dim*dim].reshape(dim, dim))
             # print(final_est_vector[dim*dim:].reshape(dim, 1))
             # print(true_vectors[0 : dim*dim].reshape(dim, dim))
@@ -747,9 +896,9 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
 
 def map_oracle(sampled_row, q, theta, dim):
     inv_var_0 = theta[0][0:dim*dim].reshape(dim, dim)
-    mean_0 = np.linalg.inv(inv_var_0).dot(theta[0][dim*dim:].reshape(dim,))
+    mean_0 = np.linalg.pinv(inv_var_0).dot(theta[0][dim*dim:].reshape(dim,))
     inv_var_1 = theta[1][0:dim*dim].reshape(dim, dim)
-    mean_1 = np.linalg.inv(inv_var_1).dot(theta[1][dim*dim:].reshape(dim,))
+    mean_1 = np.linalg.pinv(inv_var_1).dot(theta[1][dim*dim:].reshape(dim,))
     # Calculate gaussian density of incoming point
     eta_0 = (np.sqrt(np.linalg.det(inv_var_0))*np.exp(-0.5 * np.dot((sampled_row - mean_0).T, np.dot(inv_var_0, (sampled_row - mean_0)))))/((2*np.pi)**(dim/2))
     eta_1 = (np.sqrt(np.linalg.det(inv_var_1))*np.exp(-0.5 * np.dot((sampled_row - mean_1).T, np.dot(inv_var_1, (sampled_row - mean_1)))))/((2*np.pi)**(dim/2))
@@ -759,6 +908,38 @@ def map_oracle(sampled_row, q, theta, dim):
         return 0
     else:
         return 1
+
+import numpy as np
+from scipy.stats import multivariate_normal
+
+def map_classifier(prior0, prior1, mu0, sigma0, mu1, sigma1, test_point):
+    """
+    MAP classifier for two Gaussian classes.
+    
+    Parameters:
+    - prior0, prior1: Prior probabilities of class 0 and class 1.
+    - mu0, mu1: Mean vectors (1D arrays) for class 0 and class 1.
+    - sigma0, sigma1: Covariance matrices (2D arrays) for class 0 and class 1.
+    - test_point: The data point (1D array) to be classified.
+    
+    Returns:
+    - predicted_class: 0 or 1 based on the MAP decision rule.
+    """
+    
+    # 1. Calculate the likelihood P(x|C) for each class
+    # multivariate_normal.pdf handles the Gaussian density calculation
+    likelihood0 = multivariate_normal.pdf(test_point, mean=mu0, cov=sigma0)
+    likelihood1 = multivariate_normal.pdf(test_point, mean=mu1, cov=sigma1)
+    
+    # 2. Calculate the "Posterior numerator": P(x|C) * P(C)
+    # The denominator P(x) is constant for both and can be ignored for classification
+    posterior_num0 = likelihood0 * prior0
+    posterior_num1 = likelihood1 * prior1
+    
+    # 3. Decision Rule: Choose the class with the higher value
+    return 1 if posterior_num1 > posterior_num0 else 0
+
+
 
 def generate_online_sample(means, var, dim, priors, group, model):
     """
@@ -830,21 +1011,104 @@ def main(args):
             'p_y_1': p_y_1
         }
 
-        #generate_real_data_and_model()
+        # Temporary fix
+        moments, x_all, z_all, y_all, _, z_test_all, y_test_all, emb_model = generate_real_data_and_model(dataset='adult')
+        priors = {
+            'p_a_1': np.mean(z_all),
+            'p_y_1_a_1': np.sum((y_all == 1) & (z_all == 1)) / np.sum(z_all == 1),
+            'p_y_1_a_0': np.sum((y_all == 1) & (z_all == 0)) / np.sum(z_all == 0),
+            'p_y_1': np.mean(y_all)
+        }
+        eps = 1e-4
+        dim = x_all.shape[1]
+        means = [moments[0][0], moments[1][0], moments[2][0], moments[3][0]]
+        var = [moments[0][1] + eps*np.eye(dim), moments[1][1] + eps*np.eye(dim), moments[2][1] + eps*np.eye(dim), moments[3][1] + eps*np.eye(dim)]
+        dim = x_all.shape[1]
 
-        means, x, z, y = generate_examples(dim=dim, var=var, num_examples=train_samples, 
-                                        a_1_prob=p_a_1, 
-                                        y_1_a_1_prob=p_y_1_a_1, 
-                                        y_1_a_0_prob=p_y_1_a_0)
-        _, x_test, z_test, y_test = generate_examples(dim=dim, var=var, num_examples=train_samples,
-                                                    means=means, a_1_prob=p_a_1,
-                                                        y_1_a_1_prob=p_y_1_a_1,
-                                                        y_1_a_0_prob=p_y_1_a_0)
-        _, x_val, z_val, y_val = generate_examples(dim=dim, var=var, num_examples=10000,
-                                                means=means, a_1_prob=p_a_1,
-                                                y_1_a_1_prob=p_y_1_a_1,
-                                                y_1_a_0_prob=p_y_1_a_0)
+
+        # means, x, z, y = generate_examples(dim=dim, var=var, num_examples=train_samples, 
+        #                                 a_1_prob=p_a_1, 
+        #                                 y_1_a_1_prob=p_y_1_a_1, 
+        #                                 y_1_a_0_prob=p_y_1_a_0)
+        # _, x_test, z_test, y_test = generate_examples(dim=dim, var=var, num_examples=train_samples,
+        #                                             means=means, a_1_prob=p_a_1,
+        #                                                 y_1_a_1_prob=p_y_1_a_1,
+        #                                                 y_1_a_0_prob=p_y_1_a_0)
+        # _, x_val, z_val, y_val = generate_examples(dim=dim, var=var, num_examples=10000,
+        #                                         means=means, a_1_prob=p_a_1,
+        #                                         y_1_a_1_prob=p_y_1_a_1,
+        #                                         y_1_a_0_prob=p_y_1_a_0)
+        _,x,z,y = generate_examples(dim=dim, var=var, num_examples=train_samples,
+                                          a_1_prob=priors['p_a_1'],
+                                          y_1_a_1_prob=priors['p_y_1_a_1'],
+                                          y_1_a_0_prob=priors['p_y_1_a_0'],
+                                          means=means)
+        # Collect subgroup x
+        x_00 = x[(z == 0) & (y == 0)]
+        x_01 = x[(z == 1) & (y == 0)]
+        x_10 = x[(z == 0) & (y == 1)]
+        x_11 = x[(z == 1) & (y == 1)]
+
+        k = 5
+        dimension = x_00.shape[1]
+        random_unit_vectors = np.random.randn(k, dimension)
+        random_unit_vectors = random_unit_vectors / np.linalg.norm(random_unit_vectors, axis=1, keepdims=True)
+
+        # Project train and test embeddings onto these random unit vectors
+        projected_train_00 = np.dot(x_00, random_unit_vectors.T)
+        projected_train_01 = np.dot(x_01, random_unit_vectors.T)
+        projected_train_10 = np.dot(x_10, random_unit_vectors.T)
+        projected_train_11 = np.dot(x_11, random_unit_vectors.T)
+
+
+        # Plot histograms of the projections
+        for i in range(k):
+            plt.figure(figsize=(10, 6))
+            plt.hist(projected_train_00[:, i], bins=50, alpha=0.5, label='00', color='blue')
+            plt.hist(projected_train_10[:, i], bins=50, alpha=0.5, label='10', color='red')
+            plt.title(f'Histogram of Projections onto Random Unit Vector {i+1} (Group A=0)')
+            plt.xlabel('Projection Value')
+            plt.ylabel('Frequency')
+            plt.legend()
+            plt.grid()
+            plt.savefig(f"../results_gaussian/algorithm_exp/{dataset}/{model}/{policy}/histogram_a0_{i+1}.png")
+        
+        for i in range(k):
+            plt.figure(figsize=(10, 6))
+            plt.hist(projected_train_01[:, i], bins=50, alpha=0.5, label='01', color='green')
+            plt.hist(projected_train_11[:, i], bins=50, alpha=0.5, label='11', color='purple')
+            plt.title(f'Histogram of Projections onto Random Unit Vector {i+1} (Group A=1)')
+            plt.xlabel('Projection Value')
+            plt.ylabel('Frequency')
+            plt.legend()
+            plt.grid()
+            plt.savefig(f"../results_gaussian/algorithm_exp/{dataset}/{model}/{policy}/histogram_a1_{i+1}.png")
+
+        _,x_test,z_test,y_test = generate_examples(dim=dim, var=var, num_examples=test_samples,
+                                                         a_1_prob=priors['p_a_1'],
+                                                         y_1_a_1_prob=priors['p_y_1_a_1'],
+                                                         y_1_a_0_prob=priors['p_y_1_a_0'],
+                                                         means=means)
         print(f'Data generated and priors set: {x.shape}, {x_test.shape}')
+        
+        
+        # Evaluate Bayes classifier performance on all data
+
+        pred_0 = np.apply_along_axis(lambda x: map_classifier(1 - priors['p_y_1_a_0'], priors['p_y_1_a_0'], means[0], var[0], means[2], var[2], x), axis=1, arr=x_all[z_all == 0])
+        pred_1 = np.apply_along_axis(lambda x: map_classifier(1 - priors['p_y_1_a_1'], priors['p_y_1_a_1'], means[1], var[1], means[3], var[3], x), axis=1, arr=x_all[z_all == 1])
+
+        classification_report_0 = classification_report(y_all[z_all == 0], pred_0)
+        classification_report_1 = classification_report(y_all[z_all == 1], pred_1)
+        # Print classification reports
+        print("Bayes Classification Report for Group A=0:")
+        print(classification_report_0)
+        print(np.mean(pred_0))
+        print(priors['p_y_1_a_0'])
+        print("Bayes Classification Report for Group A=1:")
+        print(classification_report_1)
+        print(np.mean(pred_1))
+        print(priors['p_y_1_a_1'])
+
         # Convert to dataframe
         df = pd.DataFrame(x, columns=[f'x_{i}' for i in range(dim)])
         df['sensitive'] = z
@@ -862,7 +1126,32 @@ def main(args):
         moments, x_all, z_all, y_all, x_test_all, z_test_all, y_test_all, emb_model = generate_real_data_and_model(dataset=dataset)
         print(f'Real data loaded: {x_all.shape}, {x_test_all.shape}')
         means = [moments[0][0], moments[1][0], moments[2][0], moments[3][0]]
-        var = [moments[0][1], moments[1][1], moments[2][1], moments[3][1]]
+        # var = [moments[0][1], moments[1][1], moments[2][1], moments[3][1]]
+        eps = 1e-4
+        dim = x_all.shape[1]
+        var = [moments[0][1] + eps*np.eye(dim), moments[1][1] + eps*np.eye(dim), moments[2][1] + eps*np.eye(dim), moments[3][1] + eps*np.eye(dim)]
+        priors = {
+            'p_a_1': np.mean(z_all),
+            'p_y_1_a_1': np.sum((y_all == 1) & (z_all == 1)) / np.sum(z_all == 1),
+            'p_y_1_a_0': np.sum((y_all == 1) & (z_all == 0)) / np.sum(z_all == 0),
+            'p_y_1': np.mean(y_all)
+        }
+        # Evaluate Bayes classifier performance on all data
+        pred_0 = np.apply_along_axis(lambda x: map_classifier(1 - priors['p_y_1_a_0'], priors['p_y_1_a_0'], means[0], var[0], means[2], var[2], x), axis=1, arr=x_all[z_all == 0])
+        pred_1 = np.apply_along_axis(lambda x: map_classifier(1 - priors['p_y_1_a_1'], priors['p_y_1_a_1'], means[1], var[1], means[3], var[3], x), axis=1, arr=x_all[z_all == 1])
+
+        classification_report_0 = classification_report(y_all[z_all == 0], pred_0)
+        classification_report_1 = classification_report(y_all[z_all == 1], pred_1)
+        # Print classification reports
+        print("Bayes Classification Report for Group A=0:")
+        print(classification_report_0)
+        print(np.mean(pred_0))
+        print(priors['p_y_1_a_0'])
+        print("Bayes Classification Report for Group A=1:")
+        print(classification_report_1)
+        print(np.mean(pred_1))
+        print(priors['p_y_1_a_1'])
+
         # Convert to dataframe
         df_all = pd.DataFrame(x_all, columns=[f'x_{i}' for i in range(x_all.shape[1])])
         df_all['sensitive'] = z_all
@@ -900,17 +1189,26 @@ def main(args):
         writer_exp = csv.writer(file_exp)
         writer_two = csv.writer(file_two)
         if not file_exists_exp or os.path.getsize(writer_path_exp) == 0:
-            writer_exp.writerow(['run', 'algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'tau_prime', 'f_0', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
+            writer_exp.writerow(['run', 'algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'thresh', 'tau_prime', 'f_0', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
         if not file_exists_two or os.path.getsize(writer_path_two) == 0:
             # Check this later
-            writer_two.writerow(['run', 'algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'tau_prime', 'f_0', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
+            writer_two.writerow(['run', 'algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'thresh', 'tau_prime', 'f_0', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
         # Get filtered data and model (Same for both algorithms)
+        # import copy
+        # df_copy = copy.deepcopy(test_df) if dataset == 'gaussian' else copy.deepcopy(test_df_all)
         if dataset == 'gaussian':
             _ , model, alpha, dist_fair = get_f_0(policy, df, A, train, model, target_col=target_col, test_df=test_df)
         else:
             _ , model, alpha, dist_fair = get_f_0(policy, df_all, A, train, model, target_col=target_col, test_df=test_df_all)
         print(f'Positivity rate of f_0 for every subgroup: {alpha}')
-        for run in range(5):
+        # X_test_1 = df_copy.drop(columns=[target_col])
+        # Y_test_1 = df_copy[target_col]
+        # pred_1 = model.predict(X_test_1)
+        # # classification report
+        # print(classification_report(Y_test_1, pred_1))
+
+        num_trials = 5
+        for run in range(num_trials):
             # Generate new samples
             if dataset == 'gaussian':
                 _, x, z, y = generate_examples(dim=dim, var=var, num_examples=train_samples, means=means, a_1_prob=p_a_1,
@@ -944,11 +1242,16 @@ def main(args):
             costs = []
             eps_prime = 1/5
             delta = 0.01
-            for eps in [0.8, 0.5, 0.25, 0.1, 0.05, 0.01, 0.001]:
-                for costs in [(0.5,0.25), (0.5, 0.5), (0.5, 1), (0.5, 3)]:
+            fair_thresholds = [0.5, 0.4, 0.0, 0.0, 0.0]
+            eps_values = [0.3, 0.2, 0.1, 0.05, 0.01]
+            # costs_list = [(0.5,0.25), (0.5, 0.5), (0.5, 1), (0.5, 3)]
+            # eps_values = [0.8]
+            costs_list = [(0.5,0.25), (0, 1), (0.5, 1)]
+            for fair_thresh, eps in zip(fair_thresholds, eps_values):
+                for costs in costs_list:
                     tau_prime = (0.5*np.log(24/delta))/(eps_prime**2)
                     tau = min((2*np.log(24/delta))/(eps**2), 1000) # Where will this be used, the paper uses tau to define p, whereas we use sample ratios
-                    print(f'Tau prime: {tau_prime}, Tau: {tau}, Epsilon: {eps}, Delta: {delta}, Costs: {costs}')
+                    print(f'Tau prime: {tau_prime}, Tau: {tau}, Epsilon: {eps}, Threshold: {fair_thresh}, Delta: {delta}, Costs: {costs}')
                     sample_cost = costs[0]
                     label_cost = costs[1]
                         
@@ -1039,12 +1342,16 @@ def main(args):
                             q_min = min(q_01, q_11)
                             q_oracle = (q_01, q_11)
                             theta_oracle = subgroup_params['01'], subgroup_params['11']
-                        m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 20000)
+                        if dataset == 'gaussian':
+                            m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 20000)
+                        else:
+                            m = min(int((500*np.log(8/delta))/(q_min*eps**2)), 5000) # 1000 changed to 5000
                         concat_samples_2 = 0
                         curr_sample_cost_2 = 0
                         N_0 = 0
                         N_1 = 0
                         N = copy.deepcopy(m)
+                        # print(q_oracle, theta_oracle)
                         while(m > 0):
                             # index = rng.integers(0,len(df_a), 1)
                             # sampled_row = df_a.iloc[index]
@@ -1073,8 +1380,8 @@ def main(args):
                     eo_diff_exp = max(np.abs((p_00/q_hat_00) - (p_01/q_hat_01)), np.abs((p_10/q_hat_10) - (p_11/q_hat_11)))
                     eo_diff_2 = max(np.abs((p_00/q_00_2) - (p_01/q_01_2)), np.abs((p_10/q_10_2) - (p_11/q_11_2)))
                     # What all to track: writer.writerow(['algo_name', 'sample_cost_fixed', 'label_cost_fixed', 'eps', 'tau_prime', 'policy', 'sample_cost', 'label_cost', 'eo_diff_est', 'eo_diff_true', 'num_samples', 'true_fair', 'pred_fair'])
-                    writer_exp.writerow([run+1,'exp', sample_cost, label_cost, eps, tau_prime, args.model, policy, curr_sample_cost, curr_label_cost, eo_diff_exp, dist_fair, s, 1 - (dist_fair > eps) , 1 - (eo_diff_exp > eps/2)])
-                    writer_two.writerow([run+1, 'two', sample_cost, label_cost, eps, tau, args.model, policy, curr_sample_cost_2, curr_label_cost_2, eo_diff_2, dist_fair, s_2, 1 - (dist_fair > eps), 1 - (eo_diff_2 > eps/2)])
+                    writer_exp.writerow([run+1,'exp', sample_cost, label_cost, eps, fair_thresh, tau_prime, args.model, policy, curr_sample_cost, curr_label_cost, eo_diff_exp, dist_fair, s, 1 - (dist_fair > fair_thresh + eps) , 1 - (eo_diff_exp > fair_thresh + eps/2)])
+                    writer_two.writerow([run+1, 'two', sample_cost, label_cost, eps, fair_thresh, tau_prime, args.model, policy, curr_sample_cost_2, curr_label_cost_2, eo_diff_2, dist_fair, s_2, 1 - (dist_fair > fair_thresh + eps), 1 - (eo_diff_2 > fair_thresh + eps/2)])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
