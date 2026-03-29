@@ -1,7 +1,3 @@
-# debug changes
-# - 2 samples
-# - 250 iters in cp.SCS
-
 import os
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 os.environ['CUDA_VISIBLE_DEVICES'] = '5'
@@ -73,12 +69,21 @@ def preprocess_real_data(df, target_col, categorical_cols, sensitive_column, sca
     #     scaler = StandardScaler()
     #     X = scaler.fit_transform(X)
     # One hot encode categorical variables
-    numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col]))
-    preprocessor = sklearn.compose.ColumnTransformer(
-        transformers=[
-            ('num', StandardScaler(), numerical_cols),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols) - set([sensitive_column])))
-        ])
+    # print dtypes of columns
+    if dataset == 'adult':
+        numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col]))
+        preprocessor = sklearn.compose.ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), numerical_cols),
+                ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols) - set([sensitive_column])))
+            ])
+    elif dataset == 'law':
+        numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col, sensitive_column]))
+        preprocessor = sklearn.compose.ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), numerical_cols),
+                ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols)))
+            ])
     X = preprocessor.fit_transform(df.drop(columns=[target_col, sensitive_column]))
     if from_NB:
         y = df['f_0']
@@ -938,8 +943,6 @@ def map_classifier(prior0, prior1, mu0, sigma0, mu1, sigma1, test_point):
     
     # 3. Decision Rule: Choose the class with the higher value
     return 1 if posterior_num1 > posterior_num0 else 0
-
-
 
 def generate_online_sample(means, var, dim, priors, group, model):
     """
