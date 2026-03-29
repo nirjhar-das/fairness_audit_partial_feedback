@@ -33,12 +33,12 @@ import time
 import copy
 # Seeds used for different runs:
 # 1029, 42, 13, 729, 333, 7, 222, 86, 1500, 17
-rng = np.random.default_rng(seed=1029)
-rng_classifier = np.random.default_rng(seed=1) # To be kept constant
+rng = np.random.default_rng(seed=42)
+rng_classifier = np.random.default_rng(seed=10) # To be kept constant
 
 # Set global seed
-np.random.seed(42)
-sklearn.utils.check_random_state(42)
+np.random.seed(4)
+sklearn.utils.check_random_state(2)
 
 def preprocess_data(df, target_col, scale_numerical=True, from_NB = False, scaler=None):
     X = df.drop(columns=[target_col])
@@ -439,7 +439,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     import torch
     import torch.nn as nn
     import torch.optim as optim
-    torch.manual_seed(42)
+    torch.manual_seed(2)
 
     if not os.path.exists(f'{dataset}_{seed}_nn_embeddings.pt'):
 
@@ -462,13 +462,13 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         input_dim = X_train.shape[1]
         model_nn = SimpleNN(input_dim)
         criterion = nn.BCELoss()
-        optimizer = optim.Adam(model_nn.parameters(), lr=0.001)
+        optimizer = optim.Adam(model_nn.parameters(), lr=0.01)
         X_train_tensor = torch.FloatTensor(X_train)
         y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
         # Train for 100 epochs and print loss every 10 epochs
         model_nn.train()
-        num_epochs = 1000
-        print_every = 100
+        num_epochs = 10
+        print_every = 1
         for epoch in range(num_epochs):
             optimizer.zero_grad()
             outputs, _ = model_nn(X_train_tensor)
