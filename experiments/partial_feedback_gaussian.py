@@ -31,6 +31,7 @@ from scipy.special import lambertw
 #from imblearn.over_sampling import SMOTE
 import time
 import copy
+from fairlearn.datasets import fetch_diabetes_hospital
 # Seeds used for different runs:
 # 1029, 42, 13, 729, 333, 7, 222, 86, 1500, 17
 rng = np.random.default_rng(seed=42)
@@ -77,6 +78,7 @@ def preprocess_real_data(df, target_col, categorical_cols, sensitive_column, sca
                 ('num', StandardScaler(), numerical_cols),
                 ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols) - set([sensitive_column])))
             ])
+        X = preprocessor.fit_transform(df.drop(columns=[target_col, sensitive_column]))
     elif dataset == 'law':
         numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col, sensitive_column]))
         preprocessor = sklearn.compose.ColumnTransformer(
@@ -84,7 +86,15 @@ def preprocess_real_data(df, target_col, categorical_cols, sensitive_column, sca
                 ('num', StandardScaler(), numerical_cols),
                 ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols)))
             ])
-    X = preprocessor.fit_transform(df.drop(columns=[target_col, sensitive_column]))
+        X = preprocessor.fit_transform(df.drop(columns=[target_col, sensitive_column]))
+    elif dataset == 'hospital':
+        numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col]))
+        preprocessor = sklearn.compose.ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), numerical_cols),
+                ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols)))
+            ])
+        X = preprocessor.fit_transform(df.drop(columns=[target_col]))
     if from_NB:
         y = df['f_0']
     else:
@@ -369,6 +379,23 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         target_col = "pass_bar"
         categorical_cols = ["fam_inc", "tier", "race"]
         A = 'male' # protected attribute
+    
+    elif dataset == 'hospital':
+        data = fetch_diabetes_hospital()
+        df = data['data']
+        df['target'] = data['target']
+        # retain rows where gender is Male or Female
+        df = df[(df['gender'] == 'Male') | (df['gender'] == 'Female')]
+        target_col = 'target'
+        # Map Male to 1 and Female to 0
+        df['gender'] = df['gender'].map({'Male': 1, 'Female': 0})
+        #A = 'gender'
+        # retain Cauasian and African American only
+        df = df[(df['race'] == 'Caucasian') | (df['race'] == 'AfricanAmerican')]
+        # map Caucasian to 1 and African American to 0
+        df['race'] = df['race'].map({'Caucasian': 1, 'AfricanAmerican': 0})
+        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        A = 'race'
     
     X, y, _ = preprocess_real_data(df, target_col=target_col, categorical_cols=categorical_cols, sensitive_column=A, dataset=dataset, from_NB=False)
     
