@@ -1,0 +1,1 @@
+run,algo_name,sample_cost_fixed,label_cost_fixed,eps,thresh,tau_prime,f_0,policy,sample_cost,label_cost,eo_diff_est,eo_diff_true,num_samples,true_fair,pred_fair

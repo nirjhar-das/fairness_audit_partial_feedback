@@ -383,6 +383,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     elif dataset == 'hospital':
         data = fetch_diabetes_hospital()
         df = data['data']
+        df.drop(columns=['readmitted', 'readmit_binary'], inplace=True)
         df['target'] = data['target']
         # retain rows where gender is Male or Female
         df = df[(df['gender'] == 'Male') | (df['gender'] == 'Female')]
@@ -396,6 +397,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         df['race'] = df['race'].map({'Caucasian': 1, 'AfricanAmerican': 0})
         categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
         A = 'race'
+        #A = 'gender'
     
     X, y, _ = preprocess_real_data(df, target_col=target_col, categorical_cols=categorical_cols, sensitive_column=A, dataset=dataset, from_NB=False)
     
@@ -407,7 +409,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import classification_report, accuracy_score
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=seed, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=seed, stratify=y)
     # subgroups = {
     #     '00': (df[A] == 0) & (df[target_col] == 0),
     #     '01': (df[A] == 1) & (df[target_col] == 0),
@@ -473,9 +475,9 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         class SimpleNN(nn.Module):
             def __init__(self, input_dim, embedding_dim=10):
                 super(SimpleNN, self).__init__()
-                self.fc1 = nn.Linear(input_dim, 64)
-                self.fc2 = nn.Linear(64, 32) # Add batch norm
-                self.fc3 = nn.Linear(32, embedding_dim)
+                self.fc1 = nn.Linear(input_dim, 512)
+                self.fc2 = nn.Linear(512, 128) # Add batch norm
+                self.fc3 = nn.Linear(128, embedding_dim)
                 self.fc4 = nn.Linear(embedding_dim, 1)
                 self.relu = nn.ReLU()
                 self.sigmoid = nn.Sigmoid()
@@ -486,15 +488,15 @@ def generate_real_data_and_model(dataset='adult', seed=42):
                 embedding = self.relu(self.fc3(x))
                 out = self.sigmoid(self.fc4(embedding))
                 return out, embedding
-        input_dim = X_train.shape[1]
+        input_dim = X_train.shape[1] + 1
         model_nn = SimpleNN(input_dim)
         criterion = nn.BCELoss()
         optimizer = optim.Adam(model_nn.parameters(), lr=0.01)
-        X_train_tensor = torch.FloatTensor(X_train)
+        X_train_tensor = torch.FloatTensor(np.concatenate((X_train, a_train.reshape(-1,1)), axis=1))
         y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
         # Train for 100 epochs and print loss every 10 epochs
         model_nn.train()
-        num_epochs = 10
+        num_epochs = 20
         print_every = 1
         for epoch in range(num_epochs):
             optimizer.zero_grad()
@@ -514,7 +516,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
                     train_outputs, _ = model_nn(X_train_tensor)
                     train_preds = (train_outputs.numpy() > 0.5).astype(int)
                     train_acc = accuracy_score(y_train, train_preds)
-                    X_test_tensor = torch.FloatTensor(X_test)
+                    X_test_tensor = torch.FloatTensor(np.concatenate((X_test, a_test.reshape(-1,1)), axis=1))
                     test_outputs, _ = model_nn(X_test_tensor)
                     test_preds = (test_outputs.numpy() > 0.5).astype(int)
                     test_acc = accuracy_score(y_test, test_preds)
@@ -522,8 +524,8 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         # Get embeddings from the last hidden layer
         model_nn.eval()
         with torch.no_grad():
-            _, train_embeddings_nn = model_nn(torch.FloatTensor(X_train))
-            _, test_embeddings_nn = model_nn(torch.FloatTensor(X_test))
+            _, train_embeddings_nn = model_nn(torch.FloatTensor(np.concatenate((X_train, a_train.reshape(-1,1)), axis=1)))
+            _, test_embeddings_nn = model_nn(torch.FloatTensor(np.concatenate((X_test, a_test.reshape(-1,1)), axis=1)))
         train_embeddings_nn = train_embeddings_nn.numpy()
         test_embeddings_nn = test_embeddings_nn.numpy()
         # Normalize train and test embeddings between -1 and 1
@@ -538,7 +540,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         # test_embeddings_nn = (test_embeddings_nn - mu) / (sigma + 1e-8)
         # print('Mu and Sigma of NN embeddings:', mu, sigma)
 
-        torch.save((train_embeddings_nn, test_embeddings_nn), f'{dataset}_{seed}_nn_embeddings.pt')
+        #torch.save((train_embeddings_nn, test_embeddings_nn), f'{dataset}_{seed}_nn_embeddings.pt')
     else:
         print('Loading precomputed NN embeddings...')
         train_embeddings_nn, test_embeddings_nn = torch.load(f'{dataset}_{seed}_nn_embeddings.pt', weights_only=False)
