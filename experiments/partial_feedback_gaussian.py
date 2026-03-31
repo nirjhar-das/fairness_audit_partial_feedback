@@ -38,7 +38,7 @@ rng = np.random.default_rng(seed=42)
 rng_classifier = np.random.default_rng(seed=10) # To be kept constant
 
 # Set global seed
-np.random.seed(4)
+np.random.seed(37)
 sklearn.utils.check_random_state(2)
 
 def preprocess_data(df, target_col, scale_numerical=True, from_NB = False, scaler=None):
@@ -348,7 +348,7 @@ def generate_examples(num_examples=1000, dim=100, var=1, means=None, a_1_prob=0.
     return [mu_0_0, mu_0_1, mu_1_0, mu_1_1], np.vstack((samples_0_0, samples_0_1, samples_1_0, samples_1_1)), sensitive, label
 
 # Gaussianized representations of real data
-def generate_real_data_and_model(dataset='adult', seed=42):
+def generate_real_data_and_model(dataset='adult', seed=4543):
     # Load Datasets
     if dataset == 'adult':
         columns = [ "age", "workclass", "fnlwgt", "education", "education-num", "marital-status", "occupation", "relationship", "race", "sex", "capital-gain", "capital-loss", "hours-per-week", "native-country", "income"]        
@@ -468,25 +468,28 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     import torch
     import torch.nn as nn
     import torch.optim as optim
-    torch.manual_seed(2)
+    torch.manual_seed(247)
 
     if not os.path.exists(f'{dataset}_{seed}_nn_embeddings.pt'):
 
         class SimpleNN(nn.Module):
-            def __init__(self, input_dim, embedding_dim=10):
+            def __init__(self, input_dim, embedding_dim=5):
                 super(SimpleNN, self).__init__()
-                self.fc1 = nn.Linear(input_dim, 512)
-                self.fc2 = nn.Linear(512, 128) # Add batch norm
-                self.fc3 = nn.Linear(128, embedding_dim)
+                # self.fc1 = nn.Linear(input_dim, 512)
+                self.fc1 = nn.Linear(input_dim, embedding_dim)
+                # self.fc2 = nn.Linear(512, 128) # Add batch norm
+                # self.fc3 = nn.Linear(128, embedding_dim)
                 self.fc4 = nn.Linear(embedding_dim, 1)
                 self.relu = nn.ReLU()
                 self.sigmoid = nn.Sigmoid()
             
             def forward(self, x):
                 x = self.relu(self.fc1(x))
-                x = self.relu(self.fc2(x))
-                embedding = self.relu(self.fc3(x))
+                embedding = x
                 out = self.sigmoid(self.fc4(embedding))
+                # x = self.relu(self.fc2(x))
+                # embedding = self.relu(self.fc3(x))
+                # out = self.sigmoid(self.fc4(embedding))
                 return out, embedding
         input_dim = X_train.shape[1] + 1
         model_nn = SimpleNN(input_dim)
@@ -496,12 +499,19 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
         # Train for 100 epochs and print loss every 10 epochs
         model_nn.train()
-        num_epochs = 20
+        num_epochs = 5
         print_every = 1
         for epoch in range(num_epochs):
             optimizer.zero_grad()
             outputs, _ = model_nn(X_train_tensor)
-            loss = criterion(outputs, y_train_tensor)
+            # Add class weights to handle class imbalance and modify loss function
+            class_weights = torch.tensor([1000.0, 1.0])  # Adjust based on your class distribution
+            indices_0 = (y_train_tensor == 0).squeeze()
+            indices_1 = (y_train_tensor == 1).squeeze()
+            loss = criterion(outputs[indices_0], y_train_tensor[indices_0]) * class_weights[0] + \
+                     criterion(outputs[indices_1], y_train_tensor[indices_1]) * class_weights[1]
+            
+            
             # Add regrularization to prevent overfitting
             # reg_loss = 0
             # for param in model_nn.parameters():
@@ -534,10 +544,10 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         # train_embeddings_nn = 2 * (train_embeddings_nn - min_val) / (max_val - min_val + 1e-8) - 1
         # test_embeddings_nn = 2 * (test_embeddings_nn - min_val) / (max_val - min_val + 1e-8) - 1
         # Alternatively, normalize to zero mean and unit variance
-        # mu = np.mean(train_embeddings_nn, axis=0)
-        # sigma = np.std(train_embeddings_nn, axis=0)
-        # train_embeddings_nn = (train_embeddings_nn - mu) / (sigma + 1e-8)
-        # test_embeddings_nn = (test_embeddings_nn - mu) / (sigma + 1e-8)
+        mu = np.mean(train_embeddings_nn, axis=0)
+        sigma = np.std(train_embeddings_nn, axis=0)
+        train_embeddings_nn = (train_embeddings_nn - mu) / (sigma + 1e-8)
+        test_embeddings_nn = (test_embeddings_nn - mu) / (sigma + 1e-8)
         # print('Mu and Sigma of NN embeddings:', mu, sigma)
 
         #torch.save((train_embeddings_nn, test_embeddings_nn), f'{dataset}_{seed}_nn_embeddings.pt')
@@ -824,8 +834,8 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
     #print('Unique values in label:', unique_y)
     subgroups_params = {}
     # lam = {'00': 1e+6, '01': 1e+7, '10': 1e+6, '11': 1e+7} # Step sizes for each subgroup
-    lam = {'00': 1e+6, '01': 1e+7, '10': 1e+4, '11': 1e+4}
-    const = {'00': 1.0e+4, '01': 1.0e+5, '10': 1.0e+4, '11': 1.0e+4} # Constants for each subgroup
+    lam = {'00': 1e+2, '01': 1e+2, '10': 1e+5, '11': 1e+3}
+    const = {'00': 1.0e+2, '01': 1.0e+2, '10': 1.0e+2, '11': 1.0e+2} # Constants for each subgroup
     print(unique_a, unique_y)
     for a in unique_a:
         for y in unique_y:
