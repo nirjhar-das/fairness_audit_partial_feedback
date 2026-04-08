@@ -1,7 +1,3 @@
-# debug changes
-# - 2 samples
-# - 250 iters in cp.SCS
-
 import os
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 os.environ['CUDA_VISIBLE_DEVICES'] = '5'
@@ -35,14 +31,15 @@ from scipy.special import lambertw
 #from imblearn.over_sampling import SMOTE
 import time
 import copy
+from fairlearn.datasets import fetch_diabetes_hospital
 # Seeds used for different runs:
 # 1029, 42, 13, 729, 333, 7, 222, 86, 1500, 17
-rng = np.random.default_rng(seed=1029)
-rng_classifier = np.random.default_rng(seed=1) # To be kept constant
+rng = np.random.default_rng(seed=42)
+rng_classifier = np.random.default_rng(seed=10) # To be kept constant
 
 # Set global seed
-np.random.seed(42)
-sklearn.utils.check_random_state(42)
+np.random.seed(37)
+sklearn.utils.check_random_state(2)
 
 def preprocess_data(df, target_col, scale_numerical=True, from_NB = False, scaler=None):
     X = df.drop(columns=[target_col])
@@ -73,13 +70,31 @@ def preprocess_real_data(df, target_col, categorical_cols, sensitive_column, sca
     #     scaler = StandardScaler()
     #     X = scaler.fit_transform(X)
     # One hot encode categorical variables
-    numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col]))
-    preprocessor = sklearn.compose.ColumnTransformer(
-        transformers=[
-            ('num', StandardScaler(), numerical_cols),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols) - set([sensitive_column])))
-        ])
-    X = preprocessor.fit_transform(df.drop(columns=[target_col, sensitive_column]))
+    # print dtypes of columns
+    if dataset == 'adult':
+        numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col]))
+        preprocessor = sklearn.compose.ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), numerical_cols),
+                ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols) - set([sensitive_column])))
+            ])
+        X = preprocessor.fit_transform(df.drop(columns=[target_col, sensitive_column]))
+    elif dataset == 'law':
+        numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col, sensitive_column]))
+        preprocessor = sklearn.compose.ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), numerical_cols),
+                ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols)))
+            ])
+        X = preprocessor.fit_transform(df.drop(columns=[target_col, sensitive_column]))
+    elif dataset == 'hospital':
+        numerical_cols = list(set(list(df.columns)) - set(categorical_cols) - set([target_col]))
+        preprocessor = sklearn.compose.ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), numerical_cols),
+                ('cat', OneHotEncoder(handle_unknown='ignore'), list(set(categorical_cols)))
+            ])
+        X = preprocessor.fit_transform(df.drop(columns=[target_col]))
     if from_NB:
         y = df['f_0']
     else:
@@ -333,7 +348,7 @@ def generate_examples(num_examples=1000, dim=100, var=1, means=None, a_1_prob=0.
     return [mu_0_0, mu_0_1, mu_1_0, mu_1_1], np.vstack((samples_0_0, samples_0_1, samples_1_0, samples_1_1)), sensitive, label
 
 # Gaussianized representations of real data
-def generate_real_data_and_model(dataset='adult', seed=42):
+def generate_real_data_and_model(dataset='adult', seed=4543):
     # Load Datasets
     if dataset == 'adult':
         columns = [ "age", "workclass", "fnlwgt", "education", "education-num", "marital-status", "occupation", "relationship", "race", "sex", "capital-gain", "capital-loss", "hours-per-week", "native-country", "income"]        
@@ -365,6 +380,25 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         categorical_cols = ["fam_inc", "tier", "race"]
         A = 'male' # protected attribute
     
+    elif dataset == 'hospital':
+        data = fetch_diabetes_hospital()
+        df = data['data']
+        df.drop(columns=['readmitted', 'readmit_binary'], inplace=True)
+        df['target'] = data['target']
+        # retain rows where gender is Male or Female
+        df = df[(df['gender'] == 'Male') | (df['gender'] == 'Female')]
+        target_col = 'target'
+        # Map Male to 1 and Female to 0
+        df['gender'] = df['gender'].map({'Male': 1, 'Female': 0})
+        #A = 'gender'
+        # retain Cauasian and African American only
+        df = df[(df['race'] == 'Caucasian') | (df['race'] == 'AfricanAmerican')]
+        # map Caucasian to 1 and African American to 0
+        df['race'] = df['race'].map({'Caucasian': 1, 'AfricanAmerican': 0})
+        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        A = 'race'
+        #A = 'gender'
+    
     X, y, _ = preprocess_real_data(df, target_col=target_col, categorical_cols=categorical_cols, sensitive_column=A, dataset=dataset, from_NB=False)
     
     # from tabpfn_extensions import TabPFNClassifier
@@ -375,7 +409,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import classification_report, accuracy_score
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=seed, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=seed, stratify=y)
     # subgroups = {
     #     '00': (df[A] == 0) & (df[target_col] == 0),
     #     '01': (df[A] == 1) & (df[target_col] == 0),
@@ -434,40 +468,50 @@ def generate_real_data_and_model(dataset='adult', seed=42):
     import torch
     import torch.nn as nn
     import torch.optim as optim
-    torch.manual_seed(42)
+    torch.manual_seed(247)
 
     if not os.path.exists(f'{dataset}_{seed}_nn_embeddings.pt'):
 
         class SimpleNN(nn.Module):
-            def __init__(self, input_dim, embedding_dim=10):
+            def __init__(self, input_dim, embedding_dim=5):
                 super(SimpleNN, self).__init__()
-                self.fc1 = nn.Linear(input_dim, 64)
-                self.fc2 = nn.Linear(64, 32) # Add batch norm
-                self.fc3 = nn.Linear(32, embedding_dim)
+                # self.fc1 = nn.Linear(input_dim, 512)
+                self.fc1 = nn.Linear(input_dim, embedding_dim)
+                # self.fc2 = nn.Linear(512, 128) # Add batch norm
+                # self.fc3 = nn.Linear(128, embedding_dim)
                 self.fc4 = nn.Linear(embedding_dim, 1)
                 self.relu = nn.ReLU()
                 self.sigmoid = nn.Sigmoid()
             
             def forward(self, x):
                 x = self.relu(self.fc1(x))
-                x = self.relu(self.fc2(x))
-                embedding = self.relu(self.fc3(x))
+                embedding = x
                 out = self.sigmoid(self.fc4(embedding))
+                # x = self.relu(self.fc2(x))
+                # embedding = self.relu(self.fc3(x))
+                # out = self.sigmoid(self.fc4(embedding))
                 return out, embedding
-        input_dim = X_train.shape[1]
+        input_dim = X_train.shape[1] + 1
         model_nn = SimpleNN(input_dim)
         criterion = nn.BCELoss()
-        optimizer = optim.Adam(model_nn.parameters(), lr=0.001)
-        X_train_tensor = torch.FloatTensor(X_train)
+        optimizer = optim.Adam(model_nn.parameters(), lr=0.01)
+        X_train_tensor = torch.FloatTensor(np.concatenate((X_train, a_train.reshape(-1,1)), axis=1))
         y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
         # Train for 100 epochs and print loss every 10 epochs
         model_nn.train()
-        num_epochs = 1000
-        print_every = 100
+        num_epochs = 5
+        print_every = 1
         for epoch in range(num_epochs):
             optimizer.zero_grad()
             outputs, _ = model_nn(X_train_tensor)
-            loss = criterion(outputs, y_train_tensor)
+            # Add class weights to handle class imbalance and modify loss function
+            class_weights = torch.tensor([1000.0, 1.0])  # Adjust based on your class distribution
+            indices_0 = (y_train_tensor == 0).squeeze()
+            indices_1 = (y_train_tensor == 1).squeeze()
+            loss = criterion(outputs[indices_0], y_train_tensor[indices_0]) * class_weights[0] + \
+                     criterion(outputs[indices_1], y_train_tensor[indices_1]) * class_weights[1]
+            
+            
             # Add regrularization to prevent overfitting
             # reg_loss = 0
             # for param in model_nn.parameters():
@@ -482,7 +526,7 @@ def generate_real_data_and_model(dataset='adult', seed=42):
                     train_outputs, _ = model_nn(X_train_tensor)
                     train_preds = (train_outputs.numpy() > 0.5).astype(int)
                     train_acc = accuracy_score(y_train, train_preds)
-                    X_test_tensor = torch.FloatTensor(X_test)
+                    X_test_tensor = torch.FloatTensor(np.concatenate((X_test, a_test.reshape(-1,1)), axis=1))
                     test_outputs, _ = model_nn(X_test_tensor)
                     test_preds = (test_outputs.numpy() > 0.5).astype(int)
                     test_acc = accuracy_score(y_test, test_preds)
@@ -490,8 +534,8 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         # Get embeddings from the last hidden layer
         model_nn.eval()
         with torch.no_grad():
-            _, train_embeddings_nn = model_nn(torch.FloatTensor(X_train))
-            _, test_embeddings_nn = model_nn(torch.FloatTensor(X_test))
+            _, train_embeddings_nn = model_nn(torch.FloatTensor(np.concatenate((X_train, a_train.reshape(-1,1)), axis=1)))
+            _, test_embeddings_nn = model_nn(torch.FloatTensor(np.concatenate((X_test, a_test.reshape(-1,1)), axis=1)))
         train_embeddings_nn = train_embeddings_nn.numpy()
         test_embeddings_nn = test_embeddings_nn.numpy()
         # Normalize train and test embeddings between -1 and 1
@@ -500,13 +544,13 @@ def generate_real_data_and_model(dataset='adult', seed=42):
         # train_embeddings_nn = 2 * (train_embeddings_nn - min_val) / (max_val - min_val + 1e-8) - 1
         # test_embeddings_nn = 2 * (test_embeddings_nn - min_val) / (max_val - min_val + 1e-8) - 1
         # Alternatively, normalize to zero mean and unit variance
-        # mu = np.mean(train_embeddings_nn, axis=0)
-        # sigma = np.std(train_embeddings_nn, axis=0)
-        # train_embeddings_nn = (train_embeddings_nn - mu) / (sigma + 1e-8)
-        # test_embeddings_nn = (test_embeddings_nn - mu) / (sigma + 1e-8)
+        mu = np.mean(train_embeddings_nn, axis=0)
+        sigma = np.std(train_embeddings_nn, axis=0)
+        train_embeddings_nn = (train_embeddings_nn - mu) / (sigma + 1e-8)
+        test_embeddings_nn = (test_embeddings_nn - mu) / (sigma + 1e-8)
         # print('Mu and Sigma of NN embeddings:', mu, sigma)
 
-        torch.save((train_embeddings_nn, test_embeddings_nn), f'{dataset}_{seed}_nn_embeddings.pt')
+        #torch.save((train_embeddings_nn, test_embeddings_nn), f'{dataset}_{seed}_nn_embeddings.pt')
     else:
         print('Loading precomputed NN embeddings...')
         train_embeddings_nn, test_embeddings_nn = torch.load(f'{dataset}_{seed}_nn_embeddings.pt', weights_only=False)
@@ -790,8 +834,8 @@ def subgroup_manolis(data, pf_model, alpha, var=2, dim=5, means=None, dataset='g
     #print('Unique values in label:', unique_y)
     subgroups_params = {}
     # lam = {'00': 1e+6, '01': 1e+7, '10': 1e+6, '11': 1e+7} # Step sizes for each subgroup
-    lam = {'00': 1e+6, '01': 1e+7, '10': 1e+4, '11': 1e+4}
-    const = {'00': 1.0e+4, '01': 1.0e+5, '10': 1.0e+4, '11': 1.0e+4} # Constants for each subgroup
+    lam = {'00': 1e+2, '01': 1e+2, '10': 1e+5, '11': 1e+3}
+    const = {'00': 1.0e+2, '01': 1.0e+2, '10': 1.0e+2, '11': 1.0e+2} # Constants for each subgroup
     print(unique_a, unique_y)
     for a in unique_a:
         for y in unique_y:
@@ -938,8 +982,6 @@ def map_classifier(prior0, prior1, mu0, sigma0, mu1, sigma1, test_point):
     
     # 3. Decision Rule: Choose the class with the higher value
     return 1 if posterior_num1 > posterior_num0 else 0
-
-
 
 def generate_online_sample(means, var, dim, priors, group, model):
     """

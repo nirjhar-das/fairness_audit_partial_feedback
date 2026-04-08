@@ -1,0 +1,2 @@
+run,algo_name,sample_cost_fixed,label_cost_fixed,eps,thresh,tau_prime,f_0,policy,sample_cost,label_cost,eo_diff_est,eo_diff_true,num_samples,true_fair,pred_fair
+1,two,0.5,0.25,0.3,0.5,97.29030020420045,LR,full_data,2500.0,799.25,0.27311795350131246,0.2586263555701611,3197,1,1
